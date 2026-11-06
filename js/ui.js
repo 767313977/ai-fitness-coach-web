@@ -1,4 +1,4 @@
-// @ts-check
+﻿// @ts-check
 /** DOM 小工具、图标、toast、Markdown 渲染、SVG 图表。 */
 
 /**
@@ -180,7 +180,7 @@ function inline(text) {
   return text
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, text, url) => {
       const href = safeHref(url);
       return href
         ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`
@@ -189,10 +189,11 @@ function inline(text) {
 }
 
 /** @param {string} text */
+const SAFE_URL = /^(https?:\/\/|#|\.{0,2}\/)/i;
+
 function safeHref(url) {
   const value = String(url).trim();
-  if (/^(https?:|#|\/|\.\/|\.\.\/)/i.test(value)) return value;
-  return null;
+  return SAFE_URL.test(value) ? value : null;
 }
 
 function escapeHtml(text) {
