@@ -105,7 +105,8 @@ export function renderLibrary(ctx) {
 
   async function select(entry, ex) {
     if (!entry) { selected = { item: null, ex }; renderDetail(); renderList(); return; }
-    if (Array.isArray(entry.steps) || !entry.zh_auto || ex) {
+    // 索引里的条目没有 steps，按需下载部位文件；精选/手写条目和课表动作直接展示
+    if (Array.isArray(entry.steps) || ex) {
       selected = { item: entry, ex };
       renderDetail();
       renderList();
@@ -178,7 +179,10 @@ export function renderLibrary(ctx) {
             },
               h('div', { class: 'n' }, item.zh ?? item.name),
               h('div', { class: 't en' }, `${item.name} · ${item.equipment}`),
-              item.zh_auto ? h('span', { class: 'tag', style: 'margin-top:6px' }, '机翻') : null,
+              // 精选条目不算机翻；完整库里 zh_auto 缺省为 true，手写条目是 false
+              !item.curated && item.zh_auto !== false
+                ? h('span', { class: 'tag', style: 'margin-top:6px' }, '机翻')
+                : null,
             );
           }))
         : h('div', { class: 'empty' }, '没有匹配的动作，换个关键词'),
