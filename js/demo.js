@@ -206,7 +206,35 @@ export const DEMO_DATA = {
   daily: DEMO_HISTORY.daily,
   diet: DEMO_HISTORY.diet,
   checkin: DEMO_HISTORY.checkin,
-  strength: [],
+  strength: (() => {
+    const rows = [];
+    // 箱式高脚杯深蹲：三周渐进（8 → 9 → 10 kg）
+    [8, 9, 10].forEach((weight, index) => {
+      for (let set = 1; set <= 3; set += 1) {
+        rows.push({
+          date: addDays(TODAY, -(16 - index * 7)), exercise: '箱式高脚杯深蹲',
+          set_no: String(set), weight_kg: String(weight), reps: '10', rpe: '7', note: '', source: 'hevy',
+        });
+      }
+    });
+    // 地面哑铃卧推：最近三周重量不变（用于展示「停滞」）
+    [7, 7, 7].forEach((weight, index) => {
+      for (let set = 1; set <= 3; set += 1) {
+        rows.push({
+          date: addDays(TODAY, -(15 - index * 7)), exercise: '地面哑铃卧推',
+          set_no: String(set), weight_kg: String(weight), reps: '11', rpe: '8', note: '', source: 'hevy',
+        });
+      }
+    });
+    // 平板支撑：自重，按秒数
+    [30, 35, 40].forEach((hold, index) => {
+      rows.push({
+        date: addDays(TODAY, -(14 - index * 7)), exercise: '平板支撑',
+        set_no: '1', weight_kg: '0', reps: String(hold), rpe: '6', note: '', source: 'hevy',
+      });
+    });
+    return rows;
+  })(),
   body: [],
   loadedAt: new Date().toISOString(),
 };

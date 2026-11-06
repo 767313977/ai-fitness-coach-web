@@ -1,7 +1,11 @@
-// @ts-check
-/** 本周：关键数字 + 趋势图 + 记录热力图 + 数据新鲜度。 */
-import { h, banner, lineChart, barChart, heatmap } from '../js/ui.js';
-import { fmtNum, fmtDate, num } from '../js/data.js';
+﻿// @ts-check
+/** 本周：关键数字 + 趋势图 + 记录热力图 + 个人纪录与趋势 + 数据新鲜度。 */
+import { h, banner, lineChart, barChart, heatmap, escapeHtml } from '../js/ui.js';
+import { fmtNum, fmtDate, num, weekStart } from '../js/data.js';
+import {
+  personalRecords, progressStatus, recordsThisWeek, weeklySetsByMuscle, STATUS_LABEL,
+} from '../js/analytics.js';
+import { loadExercises, matchPlan } from '../js/dataset.js';
 
 /** @param {any} ctx */
 export function renderWeek(ctx) {
@@ -40,6 +44,8 @@ export function renderWeek(ctx) {
     ['日均蛋白', fmtNum(s.avg_protein_g), 'g', fmtNum(t.target_protein_g)],
     ['记录天数', fmtNum(s.diet_days), '天', '≥5'],
   ]));
+
+  wrap.append(analyticsCard(data));
 
   const charts = h('div', { class: 'grid-2 even' },
     h('section', { class: 'card' },
@@ -173,4 +179,122 @@ function weekRange(week) {
 function shortDate(iso) {
   if (!iso) return '';
   return `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
+}
+
+/**
+ * 个人纪录与趋势：本周破纪录 + 动作状态 + 本周肌群组数。
+ * 状态只做展示，加减重仍以 summary.exercise_history 为准。
+ * @param {any} data
+ */
+function analyticsCard(data) {
+  const rows = data.strength ?? [];
+  const card = h('section', { class: 'card' });
+  card.append(h('div', { class: 'card-head' },
+    h('div', { class: 'grow' },
+      h('h3', {}, '个人纪录与趋势'),
+      h('div', { class: 'sub' }, '按训练次数比较，不按周；加减重仍以 summary.exercise_history 为准'),
+    ),
+  ));
+
+  if (!rows.length) {
+    card.append(h('div', { class: 'empty' },
+      h('div', { class: 'big' }, '还没有力量记录'),
+      h('div', {}, '导入 Hevy 后这里会出现个人纪录与动作状态。')));
+    return card;
+  }
+
+  const week = weekStart();
+  const prs = recordsThisWeek(rows, week);
+  const prBox = h('div', { class: 'chip-row' });
+  if (prs.length) {
+    prs.slice(0, 8).forEach((p) => prBox.append(h('span', { class: 'chip lime' },
+      `${p.exercise} · ${p.label} `, h('span', { class: 'num' }, fmtNum(p.value)))));
+  } else {
+    prBox.append(h('span', { class: 'hint' }, '本周还没有破纪录'));
+  }
+  card.append(h('div', { class: 'card-title', style: 'margin-top:14px' }, '本周破纪录'), prBox);
+
+  const statusBox = h('div', { style: 'margin-top:14px' });
+  card.append(h('div', { class: 'card-title' }, '动作状态'), statusBox);
+  const muscleBox = h('div', { style: 'margin-top:14px' });
+  card.append(h('div', { class: 'card-title' }, '本周肌群组数'), muscleBox);
+
+  const names = [];
+  for (const day of data.routine?.days ?? []) {
+    for (const ex of day.exercises ?? []) {
+      if (ex.name && !names.includes(ex.name)) names.push(ex.name);
+    }
+  }
+
+  (async () => {
+    for (const name of names) {
+      const st = progressStatus(rows, name);
+      const cls = st.status === 'up' ? 'lime' : st.status === 'down' ? 'red' : '';
+      statusBox.append(h('div', { class: 'row' },
+        h('div', { class: 'grow' },
+          h('div', { class: 'name' }, name),
+          st.last ? h('div', { class: 'sub' }, `最近 ${fmtDate(st.last.date)}：${lastSetText(st.last)}`) : null,
+        ),
+        h('span', { class: `chip ${cls}` }, STATUS_LABEL[st.status] ?? st.status),
+        st.status === 'plateau'
+          ? h('span', { class: 'sub', style: 'margin-left:8px' }, '连续 3 次训练没有提高')
+          : null,
+      ));
+    }
+
+    try {
+      const dataset = await loadExercises();
+      const map = new Map();
+      // 先按课表 key 匹配精选库（中文名与精选库不一定完全同名）
+      const planMap = matchPlan(data.routine, dataset);
+      for (const day of data.routine?.days ?? []) {
+        for (const ex of day.exercises ?? []) {
+          const hit = planMap.get(ex.key);
+          if (hit?.target) map.set(ex.name, hit.target);
+        }
+      }
+      // 其余动作按中文名/英文名兜底
+      for (const item of dataset) if (item.zh && !map.has(item.zh)) map.set(item.zh, item.target);
+      for (const name of names) {
+        if (map.has(name)) continue;
+        const hit = dataset.find((d) => d.name === name);
+        if (hit) map.set(name, hit.target);
+      }
+      const items = weeklySetsByMuscle(rows, map, week);
+      if (!items.length) {
+        muscleBox.append(h('div', { class: 'hint' }, '本周还没有组数记录'));
+        return;
+      }
+      muscleBox.append(h('div', { html: muscleBars(items) }));
+    } catch (error) {
+      muscleBox.append(h('div', { class: 'hint' }, `肌群统计失败：${error?.message ?? error}`));
+    }
+  })();
+
+  return card;
+}
+
+/** @param {any} session */
+function lastSetText(session) {
+  if (!session) return '';
+  if (!session.weight) return `${fmtNum(session.reps)} 次`;
+  return `${fmtNum(session.weight)} kg × ${fmtNum(session.reps)}`;
+}
+
+/** 横向条形图：复用 .chart .cbar，避免命中进度条的 .bar 样式 */
+function muscleBars(items) {
+  const max = Math.max(...items.map((i) => i.sets), 1);
+  const rowH = 24;
+  const W = 340;
+  const labelW = 96;
+  const barW = W - labelW - 34;
+  const H = items.length * rowH + 6;
+  const rows = items.map((item, index) => {
+    const y = index * rowH + 4;
+    const width = Math.max(3, (item.sets / max) * barW);
+    return `<text class="axis" x="0" y="${y + 12}">${escapeHtml(item.muscle)}</text>
+      <rect class="cbar" x="${labelW}" y="${y}" width="${width.toFixed(1)}" height="14" rx="3"/>
+      <text class="axis" x="${(labelW + width + 6).toFixed(1)}" y="${y + 12}">${item.sets}</text>`;
+  }).join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="本周肌群组数">${rows}</svg>`;
 }

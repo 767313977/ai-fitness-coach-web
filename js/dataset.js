@@ -1,4 +1,4 @@
-// @ts-check
+﻿// @ts-check
 /** 动作库数据：仓库内置的精选动作（30 个，中文步骤）。
  *
  * 为什么不是完整的 1324 动作数据集：那份 JSON 有 17MB，首次打开要下载很久；
@@ -96,4 +96,52 @@ export function zhSteps(item) {
 /** @param {any} item */
 export function zhText(item) {
   return zhSteps(item).join('');
+}
+
+/* ---------------- 完整动作库（1324 条，按需加载） ---------------- */
+
+const FULL_DIR = './data/exercises-full';
+/** @type {any[]|null} */
+let indexMemo = null;
+/** @type {Map<string, any[]>} */
+const bodyMemo = new Map();
+
+/** 首屏不加载；打开开关后才下载索引 */
+export async function loadIndex() {
+  if (indexMemo) return indexMemo;
+  const res = await fetch(`${FULL_DIR}/index.json`, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`完整动作库索引加载失败：HTTP ${res.status}`);
+  indexMemo = await res.json();
+  return indexMemo;
+}
+
+/** @param {string} bodyPart */
+export function bodyPartSlug(bodyPart) {
+  return String(bodyPart || 'other').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'other';
+}
+
+/** @param {string} slug */
+export async function loadBodyPart(slug) {
+  if (bodyMemo.has(slug)) return bodyMemo.get(slug);
+  const res = await fetch(`${FULL_DIR}/${slug}.json`, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`动作部位数据加载失败：HTTP ${res.status}`);
+  const data = await res.json();
+  bodyMemo.set(slug, data);
+  return data;
+}
+
+/**
+ * 在完整索引里搜索（中文/英文/肌群/器械/分类）。
+ * @param {any[]} index @param {string} query @param {number} [limit]
+ */
+export function searchFull(index, query, limit = 80) {
+  const q = query.trim().toLowerCase();
+  if (!q) return index.slice(0, limit);
+  const zhKey = Object.keys(ZH_TAGS).find((k) => q.includes(k));
+  const zhTerms = zhKey ? ZH_TAGS[zhKey] : [];
+  return index.filter((item) => {
+    const hay = `${item.name} ${item.zh ?? ''} ${item.body_part} ${item.target} ${item.equipment}`.toLowerCase();
+    if (hay.includes(q)) return true;
+    return zhTerms.some((term) => hay.includes(term));
+  }).slice(0, limit);
 }

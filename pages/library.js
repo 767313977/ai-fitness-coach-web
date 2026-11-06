@@ -1,12 +1,21 @@
 // @ts-check
-/** 动作库：本计划动作 + 动作检索 + 中文分步说明 + 训练历史。 */
+/** 动作库：本计划动作 + 精选 30 条 + 按需加载的完整动作库（1324 条）。 */
 import { h, clear, banner, lineChart } from '../js/ui.js';
 import { fmtNum, fmtDate, num } from '../js/data.js';
-import { loadExercises, matchPlan, searchExercises, zhSteps } from '../js/dataset.js';
+import { personalRecords } from '../js/analytics.js';
+import {
+  loadExercises, matchPlan, searchExercises, zhSteps,
+  loadIndex, loadBodyPart, bodyPartSlug, searchFull,
+} from '../js/dataset.js';
 
 let query = '';
 /** @type {any} */
 let selected = null; // { item, ex? }
+let fullMode = sessionStorage.getItem('afc.library.full') === '1';
+/** @type {any[]|null} */
+let fullIndex = null;
+let fullLoading = false;
+let fullError = '';
 
 /** @param {any} ctx */
 export function renderLibrary(ctx) {
@@ -24,17 +33,33 @@ export function renderLibrary(ctx) {
 
   const listBox = h('div');
   const planBox = h('div');
+  const statusBox = h('div');
+
+  const toggle = h('input', { type: 'checkbox', id: 'full-lib', checked: fullMode });
+  const toggleLabel = h('label', { for: 'full-lib', class: 'row', style: 'border:0;padding:10px 0 0;gap:8px;cursor:pointer' },
+    toggle,
+    h('span', {}, '显示完整动作库（1324 个，打开后才下载索引）'),
+  );
 
   left.append(h('section', { class: 'card tight' },
     h('div', { class: 'card-title' }, '动作库'),
     search,
     h('div', { class: 'hint' }, '按中文名、英文名、肌群、器械或分类（胸/背/腿/肩/手臂/核心/有氧/拉伸）搜索。'),
+    toggleLabel,
+    statusBox,
   ));
   left.append(planBox, listBox);
   right.append(h('div', { class: 'card' }, h('div', { class: 'empty' }, '选一个动作看说明')));
 
   search.addEventListener('input', () => {
     query = search.value;
+    renderList();
+  });
+
+  toggle.addEventListener('change', async () => {
+    fullMode = toggle.checked;
+    sessionStorage.setItem('afc.library.full', fullMode ? '1' : '0');
+    if (fullMode) await ensureIndex();
     renderList();
   });
 
@@ -47,8 +72,55 @@ export function renderLibrary(ctx) {
 
   const entryFor = (ex) => planMap.get(ex.key) ?? null;
 
-  function select(item, ex) {
-    selected = { item, ex };
+  async function ensureIndex() {
+    if (fullIndex || fullLoading) return;
+    fullLoading = true;
+    fullError = '';
+    renderStatus();
+    try {
+      fullIndex = await loadIndex();
+    } catch (error) {
+      fullError = error?.message ?? String(error);
+      fullMode = false;
+      toggle.checked = false;
+      sessionStorage.setItem('afc.library.full', '0');
+    } finally {
+      fullLoading = false;
+      renderStatus();
+    }
+  }
+
+  function renderStatus() {
+    clear(statusBox);
+    if (fullLoading) statusBox.append(h('div', { class: 'hint' }, '正在下载动作索引…'));
+    else if (fullError) statusBox.append(banner(fullError, 'err'));
+    else if (fullIndex) statusBox.append(h('div', { class: 'hint' }, `完整库已加载：${fullIndex.length} 个动作`));
+  }
+
+  function isSelectedFull(entry) {
+    return Boolean(entry?.zh_auto) || Boolean(entry?.steps);
+  }
+
+  async function select(entry, ex) {
+    if (!entry) { selected = { item: null, ex }; renderDetail(); renderList(); return; }
+    if (Array.isArray(entry.steps) || !entry.zh_auto || ex) {
+      selected = { item: entry, ex };
+      renderDetail();
+      renderList();
+      return;
+    }
+    // 索引里的条目还没有 steps，按需下载部位文件
+    selected = { item: entry, ex: null, loading: true };
+    renderDetail();
+    renderList();
+    try {
+      const slug = bodyPartSlug(entry.body_part);
+      const list = await loadBodyPart(slug);
+      const full = list.find((x) => x.id === entry.id) ?? entry;
+      selected = { item: full, ex: null };
+    } catch (error) {
+      selected = { item: entry, ex: null, error: error?.message ?? String(error) };
+    }
     renderDetail();
     renderList();
   }
@@ -77,9 +149,24 @@ export function renderLibrary(ctx) {
 
     clear(listBox);
     if (!dataset.length) return;
-    const results = searchExercises(dataset, query, 60);
+
+    const curated = searchExercises(dataset, query, 60);
+    /** @type {any[]} */
+    let results = curated.map((item) => ({ ...item, curated: true }));
+    if (fullMode && fullIndex) {
+      const seen = new Set(results.map((item) => item.name.toLowerCase()));
+      for (const item of searchFull(fullIndex, query, 80)) {
+        const key = String(item.name).toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        results.push(item);
+      }
+      results = results.slice(0, 100);
+    }
+
     listBox.append(h('section', { class: 'card tight' },
-      h('div', { class: 'card-title' }, query ? `搜索结果 ${results.length}` : `全部动作（${dataset.length}）`),
+      h('div', { class: 'card-title' },
+        query ? `搜索结果 ${results.length}` : (fullMode ? `精选 + 完整库（前 ${results.length}）` : `全部动作（${dataset.length}）`)),
       results.length
         ? h('div', { class: 'lib-grid' }, results.map((item) => {
             const on = selected?.item?.id === item.id && !selected?.ex;
@@ -89,6 +176,7 @@ export function renderLibrary(ctx) {
             },
               h('div', { class: 'n' }, item.zh ?? item.name),
               h('div', { class: 't en' }, `${item.name} · ${item.equipment}`),
+              item.zh_auto ? h('span', { class: 'tag', style: 'margin-top:6px' }, '机翻') : null,
             );
           }))
         : h('div', { class: 'empty' }, '没有匹配的动作，换个关键词'),
@@ -98,8 +186,12 @@ export function renderLibrary(ctx) {
   function renderDetail() {
     clear(right);
     if (!selected) return;
-    const { item, ex } = selected;
+    const { item, ex, loading, error } = selected;
 
+    if (loading) {
+      right.append(h('section', { class: 'card' }, h('div', { class: 'empty' }, '正在下载这个动作的说明…')));
+      return;
+    }
     if (!item) {
       right.append(h('section', { class: 'card' },
         h('h3', { style: 'margin-bottom:6px' }, ex.name),
@@ -115,11 +207,13 @@ export function renderLibrary(ctx) {
       return;
     }
 
-    const steps = zhSteps(item);
+    const steps = Array.isArray(item.steps) ? item.steps : zhSteps(item);
     right.append(h('section', { class: 'card' },
       h('div', { class: 'card-title' }, ex ? '本计划动作' : '动作库'),
       h('h2', { style: 'font-size:20px;margin-bottom:2px' }, ex?.name ?? item.zh ?? item.name),
-      h('div', { class: 'tip', style: 'margin-bottom:10px' }, item.name),
+      h('div', { class: 'tip', style: 'margin-bottom:10px' },
+        item.name,
+        item.zh_auto ? h('span', { class: 'tag', style: 'margin-left:8px' }, '机翻') : null),
       h('div', { class: 'chip-row', style: 'margin-top:8px' },
         h('span', { class: 'chip lime' }, item.body_part),
         h('span', { class: 'chip' }, item.equipment),
@@ -134,11 +228,15 @@ export function renderLibrary(ctx) {
       steps.length
         ? h('ol', { class: 'steps' }, steps.map((s) => h('li', {}, s)))
         : h('p', { class: 'hint', style: 'margin-top:12px' }, '这个动作还没有中文说明。'),
+      h('p', { class: 'hint', style: 'margin-top:14px' },
+        '说明文字来自 hasaneyldrm/exercises-dataset（MIT）；不含 Gym visual 的图片/GIF。'),
     ));
 
     if (ex) {
       const history = trainingHistory(ctx.data, ex);
       if (history) right.append(history);
+      const records = recordsCard(ctx.data, ex);
+      if (records) right.append(records);
     }
   }
 
@@ -155,6 +253,7 @@ export function renderLibrary(ctx) {
       if (!selected && planEntries.length) {
         selected = { item: entryFor(planEntries[0]), ex: planEntries[0] };
       }
+      if (fullMode) await ensureIndex();
       renderList();
       renderDetail();
     } catch (error) {
@@ -205,7 +304,7 @@ function trainingHistory(data, ex) {
       ),
       delta > 0 ? h('span', { class: 'chip lime' }, `+${fmtNum(delta)} kg`) : null,
     ),
-    h('div', { html: lineChart(points, { unit: ' kg', height: 130 }) }),
+    h('div', { html: lineChart(points, { unit: ' kg', height: 130, yPad: 0.5 }) }),
     h('table', { class: 'table', style: 'margin-top:10px' },
       h('thead', {}, h('tr', {},
         h('th', {}, '日期'), h('th', { class: 'num' }, '最好一组'), h('th', { class: 'num' }, '组数'), h('th', { class: 'num' }, '容量'))),
@@ -214,6 +313,34 @@ function trainingHistory(data, ex) {
         h('td', { class: 'num' }, d.best ? `${fmtNum(d.best.weight)} × ${fmtNum(d.best.reps)}` : '—'),
         h('td', { class: 'num' }, d.count),
         h('td', { class: 'num' }, fmtNum(Math.round(d.volume))),
+      ))),
+    ),
+  );
+}
+
+/**
+ * 动作的个人纪录（负重四项；自重/助力只统计最多次数）。
+ * @param {any} data @param {any} ex
+ */
+function recordsCard(data, ex) {
+  const records = personalRecords(data.strength ?? [])[ex.name];
+  if (!records || !Object.keys(records).length) return null;
+  /** @type {[string, any, string][]} */
+  const rows = [];
+  if (records.maxWeight) rows.push(['最大重量', records.maxWeight, `${fmtNum(records.maxWeight.value)} kg`]);
+  if (records.best1RM) rows.push(['最佳估算 1RM（估算）', records.best1RM, `${fmtNum(records.best1RM.value)} kg`]);
+  if (records.maxSetVolume) rows.push(['单组最大容量', records.maxSetVolume, `${fmtNum(records.maxSetVolume.value)} kg`]);
+  if (records.maxSessionVolume) rows.push(['单次训练最大容量', records.maxSessionVolume, `${fmtNum(records.maxSessionVolume.value)} kg`]);
+  if (records.maxReps) rows.push(['最多次数', records.maxReps, `${fmtNum(records.maxReps.value)} 次`]);
+
+  return h('section', { class: 'card', style: 'margin-top:14px' },
+    h('div', { class: 'card-title' }, '个人纪录'),
+    h('table', { class: 'table' },
+      h('thead', {}, h('tr', {}, h('th', {}, '项目'), h('th', { class: 'num' }, '纪录'), h('th', {}, '日期'))),
+      h('tbody', {}, rows.map(([label, entry, value]) => h('tr', {},
+        h('td', {}, label),
+        h('td', { class: 'num' }, value),
+        h('td', { class: 'muted' }, entry.date ?? '—'),
       ))),
     ),
   );

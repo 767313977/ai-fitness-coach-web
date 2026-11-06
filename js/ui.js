@@ -196,7 +196,7 @@ function safeHref(url) {
   return SAFE_URL.test(value) ? value : null;
 }
 
-function escapeHtml(text) {
+export function escapeHtml(text) {
   return text
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
