@@ -265,7 +265,7 @@ function analyticsCard(data) {
         muscleBox.append(h('div', { class: 'hint' }, '本周还没有组数记录'));
         return;
       }
-      muscleBox.append(h('div', { html: muscleBars(items) }));
+      muscleBox.append(h('div', { html: muscleBars(items), style: 'max-width:520px' }));
     } catch (error) {
       muscleBox.append(h('div', { class: 'hint' }, `肌群统计失败：${error?.message ?? error}`));
     }
