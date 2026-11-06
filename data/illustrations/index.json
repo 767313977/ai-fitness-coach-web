@@ -1,0 +1,245 @@
+{
+  "goblet_box_squat": {
+    "slug": "goblet-squat",
+    "name": "Goblet Squat",
+    "approx": true,
+    "frames": [
+      "data/illustrations/goblet-squat/frame-1.svg",
+      "data/illustrations/goblet-squat/frame-2.svg",
+      "data/illustrations/goblet-squat/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  },
+  "glute_bridge": {
+    "slug": "glute-bridge",
+    "name": "Glute Bridge",
+    "approx": false,
+    "frames": [
+      "data/illustrations/glute-bridge/frame-1.svg",
+      "data/illustrations/glute-bridge/frame-2.svg",
+      "data/illustrations/glute-bridge/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "source": {
+        "name": "Everkinetic",
+        "url": "https://github.com/everkinetic/data/blob/main/dist/svg/0109-tension.svg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "changes": "Rasterized on a transparent 512 × 512 canvas, recolored for monochrome display, and vector-traced."
+      }
+    }
+  },
+  "calf_raise": {
+    "slug": "standing-calf-raise",
+    "name": "Standing Calf Raise",
+    "approx": false,
+    "frames": [
+      "data/illustrations/standing-calf-raise/frame-1.svg",
+      "data/illustrations/standing-calf-raise/frame-2.svg",
+      "data/illustrations/standing-calf-raise/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "source": {
+        "name": "Everkinetic",
+        "url": "https://github.com/everkinetic/data/blob/main/dist/svg/0282-tension.svg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "changes": "Rasterized on a transparent 512 × 512 canvas, recolored for monochrome display, and vector-traced."
+      }
+    }
+  },
+  "dead_bug": {
+    "slug": "dead-bug",
+    "name": "Dead Bug",
+    "approx": false,
+    "frames": [
+      "data/illustrations/dead-bug/frame-1.svg",
+      "data/illustrations/dead-bug/frame-2.svg",
+      "data/illustrations/dead-bug/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  },
+  "one_arm_dumbbell_row": {
+    "slug": "one-arm-dumbbell-row",
+    "name": "One-Arm Dumbbell Row",
+    "approx": false,
+    "frames": [
+      "data/illustrations/one-arm-dumbbell-row/frame-1.svg",
+      "data/illustrations/one-arm-dumbbell-row/frame-2.svg",
+      "data/illustrations/one-arm-dumbbell-row/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  },
+  "lateral_raise": {
+    "slug": "lateral-raise",
+    "name": "Lateral Raise",
+    "approx": false,
+    "frames": [
+      "data/illustrations/lateral-raise/frame-1.svg",
+      "data/illustrations/lateral-raise/frame-2.svg",
+      "data/illustrations/lateral-raise/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "source": {
+        "name": "Everkinetic",
+        "url": "https://github.com/everkinetic/data/blob/main/dist/svg/0018-tension.svg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "changes": "Rasterized on a transparent 512 × 512 canvas, recolored for monochrome display, and vector-traced."
+      }
+    }
+  },
+  "romanian_deadlift": {
+    "slug": "dumbbell-romanian-deadlift",
+    "name": "Dumbbell Romanian Deadlift",
+    "approx": false,
+    "frames": [
+      "data/illustrations/dumbbell-romanian-deadlift/frame-1.svg",
+      "data/illustrations/dumbbell-romanian-deadlift/frame-2.svg",
+      "data/illustrations/dumbbell-romanian-deadlift/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  },
+  "split_squat": {
+    "slug": "split-squat",
+    "name": "Split Squat",
+    "approx": false,
+    "frames": [
+      "data/illustrations/split-squat/frame-1.svg",
+      "data/illustrations/split-squat/frame-2.svg",
+      "data/illustrations/split-squat/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  },
+  "plank": {
+    "slug": "plank",
+    "name": "Plank",
+    "approx": false,
+    "frames": [
+      "data/illustrations/plank/frame-1.svg",
+      "data/illustrations/plank/frame-2.svg",
+      "data/illustrations/plank/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  },
+  "dumbbell_biceps_curl": {
+    "slug": "bicep-curl",
+    "name": "Bicep Curl",
+    "approx": false,
+    "frames": [
+      "data/illustrations/bicep-curl/frame-1.svg",
+      "data/illustrations/bicep-curl/frame-2.svg",
+      "data/illustrations/bicep-curl/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "source": {
+        "name": "Everkinetic",
+        "url": "https://github.com/everkinetic/data/blob/main/dist/svg/0224-tension.svg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "changes": "Rasterized on a transparent 512 × 512 canvas, recolored for monochrome display, and vector-traced."
+      }
+    }
+  },
+  "bent_over_fly": {
+    "slug": "rear-delt-fly",
+    "name": "Rear Delt Fly",
+    "approx": false,
+    "frames": [
+      "data/illustrations/rear-delt-fly/frame-1.svg",
+      "data/illustrations/rear-delt-fly/frame-2.svg",
+      "data/illustrations/rear-delt-fly/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  },
+  "seated_dumbbell_shoulder_press": {
+    "slug": "seated-dumbbell-press",
+    "name": "Dumbbell Seated Shoulder Press",
+    "approx": false,
+    "frames": [
+      "data/illustrations/seated-dumbbell-press/frame-1.svg",
+      "data/illustrations/seated-dumbbell-press/frame-2.svg",
+      "data/illustrations/seated-dumbbell-press/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  },
+  "dumbbell_floor_press": {
+    "slug": "dumbbell-bench-press",
+    "name": "Dumbbell Bench Press",
+    "approx": true,
+    "frames": [
+      "data/illustrations/dumbbell-bench-press/frame-1.svg",
+      "data/illustrations/dumbbell-bench-press/frame-2.svg",
+      "data/illustrations/dumbbell-bench-press/frame-3.svg"
+    ],
+    "attribution": {
+      "creator": "Bryl Lim",
+      "creatorUrl": "https://bryllim.com",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "source": {
+        "name": "Everkinetic",
+        "url": "https://github.com/everkinetic/data/blob/main/dist/svg/0055-tension.svg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "changes": "Rasterized on a transparent 512 × 512 canvas, recolored for monochrome display, and vector-traced."
+      }
+    }
+  }
+}

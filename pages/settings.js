@@ -141,7 +141,7 @@ function aboutCard() {
       h('br'),
       '数据和 App 完全同源，不经过任何中间服务器。',
       h('br'),
-      '动作库数据 © hasaneyldrm/exercises-dataset（MIT），不含 Gym visual 的图片/GIF。',
+      '动作库数据 © hasaneyldrm/exercises-dataset（MIT），不含 Gym visual 的图片/GIF。动作插图 © Bryl Lim / Everkinetic，CC BY-SA 4.0。',
       h('br'),
       '版本 web-0.2.0 · 契约见仓库 docs/数据契约.md'),
   );

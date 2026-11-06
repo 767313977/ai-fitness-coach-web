@@ -3,6 +3,7 @@
 import { h, clear, banner, lineChart } from '../js/ui.js';
 import { fmtNum, fmtDate, num } from '../js/data.js';
 import { personalRecords } from '../js/analytics.js';
+import { loadIllustrationIndex } from '../js/illustrations.js';
 import {
   loadExercises, matchPlan, searchExercises, zhSteps,
   loadIndex, loadBodyPart, bodyPartSlug, searchFull,
@@ -12,6 +13,7 @@ let query = '';
 /** @type {any} */
 let selected = null; // { item, ex? }
 let fullMode = sessionStorage.getItem('afc.library.full') === '1';
+let mediaTimer = 0;
 /** @type {any[]|null} */
 let fullIndex = null;
 let fullLoading = false;
@@ -184,6 +186,7 @@ export function renderLibrary(ctx) {
   }
 
   function renderDetail() {
+    clearInterval(mediaTimer);
     clear(right);
     if (!selected) return;
     const { item, ex, loading, error } = selected;
@@ -237,6 +240,7 @@ export function renderLibrary(ctx) {
       if (history) right.append(history);
       const records = recordsCard(ctx.data, ex);
       if (records) right.append(records);
+      right.append(illustrationCard(ex));
     }
   }
 
@@ -344,4 +348,69 @@ function recordsCard(data, ex) {
       ))),
     ),
   );
+}
+
+/**
+ * 动作插图（CC BY-SA 4.0）：静态帧 + 播放按钮；减少动效时不自动播放。
+ * @param {any} ex
+ */
+function illustrationCard(ex) {
+  const box = h('div');
+  (async () => {
+    const index = await loadIllustrationIndex();
+    const entry = index?.[ex.key];
+    if (!entry || !Array.isArray(entry.frames) || !entry.frames.length) return;
+    const frames = entry.frames.map((p) => `./${p}`);
+    const img = h('img', {
+      class: 'illustration-img',
+      src: frames[0],
+      alt: `${ex.name} 动作示意`,
+      width: 160,
+      height: 160,
+      loading: 'lazy',
+    });
+    const playBtn = h('button', { class: 'btn small' }, '播放');
+    let playing = false;
+
+    const stop = () => {
+      playing = false;
+      clearInterval(mediaTimer);
+      playBtn.textContent = '播放';
+    };
+    const start = () => {
+      if (frames.length < 2 || playing) return;
+      playing = true;
+      playBtn.textContent = '暂停';
+      let frame = 0;
+      mediaTimer = setInterval(() => {
+        frame = (frame + 1) % frames.length;
+        img.src = frames[frame];
+      }, 700);
+    };
+    playBtn.addEventListener('click', () => (playing ? stop() : start()));
+
+    box.append(h('section', { class: 'card', style: 'margin-top:14px' },
+      h('div', { class: 'card-title' }, '动作示意'),
+      h('div', { class: 'illustration' },
+        img,
+        h('div', { class: 'grow' },
+          h('div', { class: 'hint' },
+            entry.approx ? '近似动作示意：课表动作在上游没有完全一致的插图。' : '动作示意（3 帧轮换）。'),
+          h('div', { class: 'field-row', style: 'margin:10px 0 0;max-width:180px' }, playBtn),
+          h('div', { class: 'hint', style: 'margin-top:10px' },
+            '插图：Bryl Lim / Everkinetic，CC BY-SA 4.0 ',
+            h('a', { href: 'https://creativecommons.org/licenses/by-sa/4.0/', target: '_blank', rel: 'noopener' }, '许可证'),
+            ' · ',
+            h('a', { href: 'https://github.com/bryllim/workout-guide', target: '_blank', rel: 'noopener' }, '上游仓库'),
+          ),
+        ),
+      ),
+    ));
+
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && frames.length > 1) {
+      start();
+      setTimeout(stop, frames.length * 700);
+    }
+  })();
+  return box;
 }

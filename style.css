@@ -285,6 +285,17 @@ p { margin: 0; }
 .heat .cell.out { background: transparent; }
 .heat-legend { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-3); margin-top: 8px; }
 
+
+/* ---------- 动作插图 ---------- */
+.illustration { display: flex; gap: 16px; align-items: flex-start; }
+.illustration-img {
+  width: 160px; height: 160px; flex: none;
+  background: rgba(255,255,255,.04); border: 1px solid var(--line);
+  border-radius: 14px; object-fit: contain;
+}
+@media (max-width: 920px) {
+  .illustration { flex-direction: column; }
+}
 /* ---------- Markdown ---------- */
 .md { font-size: 14px; line-height: 1.75; color: var(--text-2); }
 .md h1, .md h2, .md h3 { color: var(--text); margin: 22px 0 8px; }
