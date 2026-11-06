@@ -365,6 +365,10 @@ window.addEventListener('keydown', (event) => {
 });
 
 function boot() {
+  // 方便截图/演示：?demo=1 直接进演示模式
+  try {
+    if (new URLSearchParams(location.search).get('demo') === '1') sessionStorage.setItem(DEMO_KEY, '1');
+  } catch { /* 忽略 */ }
   state.auth = loadAuth();
   // 演示标记优先于登录态，但不清掉 auth；退出演示即可回到真实数据
   state.demo = sessionStorage.getItem(DEMO_KEY) === '1';
