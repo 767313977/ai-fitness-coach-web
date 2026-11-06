@@ -1,0 +1,396 @@
+﻿{
+  "note": "精选动作库（30 个）。完整 1324 动作数据集见 hasaneyldrm/exercises-dataset（MIT），需要把 data/exercises.json 换成完整版；本文件是我们手写的常用动作 + 中文步骤，避免网页首次加载 17MB。",
+  "license": "动作说明为本项目原创；动作用语参考通用训练常识。不含 Gym visual 的图片/GIF。",
+  "exercises": [
+    {
+      "id": "goblet_squat",
+      "name": "goblet squat",
+      "zh": "高脚杯深蹲",
+      "body_part": "upper legs",
+      "equipment": "dumbbell",
+      "target": "quads",
+      "steps": [
+        "双手捧住一只哑铃贴在胸前，双脚略宽于肩，脚尖微微外八。",
+        "屈髋屈膝下蹲，膝盖顺着脚尖方向打开，蹲到能保持背部中立的最低点。",
+        "脚掌踩实地面，脚跟发力站起，站直时不要过度挺腰。"
+      ]
+    },
+    {
+      "id": "box_squat",
+      "name": "box squat",
+      "zh": "箱式深蹲",
+      "body_part": "upper legs",
+      "equipment": "body weight",
+      "target": "quads",
+      "steps": [
+        "身后放一把椅子或箱子，双脚与肩同宽。",
+        "屈髋向后坐，臀部轻触椅面后停一下，膝盖对准脚尖。",
+        "脚掌踩实站起，全程膝盖不内扣。"
+      ]
+    },
+    {
+      "id": "glute_bridge",
+      "name": "glute bridge",
+      "zh": "臀桥",
+      "body_part": "upper legs",
+      "equipment": "body weight",
+      "target": "glutes",
+      "steps": [
+        "仰卧屈膝，双脚踩地与髋同宽，脚跟离臀部约一掌。",
+        "收紧腹部，用臀部发力把髋顶起，肩到膝成一条直线。",
+        "顶点停 1 秒，慢慢放下，不要用腰代偿。"
+      ]
+    },
+    {
+      "id": "calf_raise",
+      "name": "calf raise",
+      "zh": "提踵",
+      "body_part": "lower legs",
+      "equipment": "dumbbell",
+      "target": "calves",
+      "steps": [
+        "站直，双手各持一只哑铃，前脚掌踩实。",
+        "慢下 3 秒到脚跟接近地面，再踮起脚尖到最高点。",
+        "全程膝盖基本伸直，不要弹震。"
+      ]
+    },
+    {
+      "id": "dead_bug",
+      "name": "dead bug",
+      "zh": "死虫",
+      "body_part": "waist",
+      "equipment": "body weight",
+      "target": "abs",
+      "steps": [
+        "仰卧，双臂指向天花板，屈髋屈膝 90°，腰贴地。",
+        "对侧手和腿同时慢慢伸出，腰不要离地。",
+        "回到中间再换另一侧，动作越慢越稳。"
+      ]
+    },
+    {
+      "id": "floor_press",
+      "name": "dumbbell floor press",
+      "zh": "哑铃地面卧推",
+      "body_part": "chest",
+      "equipment": "dumbbell",
+      "target": "pectorals",
+      "steps": [
+        "仰卧屈膝，双手各持一只哑铃，肘约 45°。",
+        "肩胛收紧贴地，把哑铃推起，手臂伸直但不锁死。",
+        "慢慢下放到上臂轻触地面，再推起。"
+      ]
+    },
+    {
+      "id": "one_arm_row",
+      "name": "one arm dumbbell row",
+      "zh": "单臂哑铃划船",
+      "body_part": "back",
+      "equipment": "dumbbell",
+      "target": "upper back",
+      "steps": [
+        "一手一膝撑在椅面上，背部保持平直，另一手持哑铃自然下垂。",
+        "肩胛先向后收，再把哑铃拉向髋部方向。",
+        "慢慢放下到手臂伸直，不要耸肩。"
+      ]
+    },
+    {
+      "id": "seated_shoulder_press",
+      "name": "seated dumbbell shoulder press",
+      "zh": "坐姿哑铃推举",
+      "body_part": "shoulders",
+      "equipment": "dumbbell",
+      "target": "delts",
+      "steps": [
+        "坐在有靠背的椅子上，双手各持一只哑铃举到肩高。",
+        "背部贴住椅背，把哑铃向上推起，手臂伸直但不锁死。",
+        "慢慢下放回肩高，不要塌腰。"
+      ]
+    },
+    {
+      "id": "lateral_raise",
+      "name": "lateral raise",
+      "zh": "侧平举",
+      "body_part": "shoulders",
+      "equipment": "dumbbell",
+      "target": "delts",
+      "steps": [
+        "站直，双手各持一只轻哑铃放在身体两侧，肘微屈。",
+        "用肩膀带动手臂向两侧抬起，到与肩同高即可。",
+        "慢慢放下，不要甩、不要耸肩。"
+      ]
+    },
+    {
+      "id": "biceps_curl",
+      "name": "dumbbell biceps curl",
+      "zh": "哑铃弯举",
+      "body_part": "upper arms",
+      "equipment": "dumbbell",
+      "target": "biceps",
+      "steps": [
+        "站直，双手各持一只哑铃，掌心向前，肘贴近身体。",
+        "保持上臂不动，屈肘把哑铃举到肩前。",
+        "慢下 2–3 秒回到起点，不借力。"
+      ]
+    },
+    {
+      "id": "bent_over_fly",
+      "name": "bent over fly",
+      "zh": "俯身飞鸟",
+      "body_part": "back",
+      "equipment": "dumbbell",
+      "target": "upper back",
+      "steps": [
+        "屈髋俯身，背部平直，双手持轻哑铃自然下垂，肘微屈。",
+        "用背部发力把手臂向两侧打开，肩胛收紧。",
+        "慢慢合拢，不要用斜方肌耸肩。"
+      ]
+    },
+    {
+      "id": "romanian_deadlift",
+      "name": "romanian deadlift",
+      "zh": "罗马尼亚硬拉",
+      "body_part": "upper legs",
+      "equipment": "dumbbell",
+      "target": "hamstrings",
+      "steps": [
+        "站直，双手持哑铃贴在大腿前，膝微屈并固定。",
+        "髋向后推，哑铃贴着腿往下，背保持中立，感觉大腿后侧拉长。",
+        "臀腿发力把髋推回来，站直但不要后仰。"
+      ]
+    },
+    {
+      "id": "split_squat",
+      "name": "split squat",
+      "zh": "分腿蹲",
+      "body_part": "upper legs",
+      "equipment": "body weight",
+      "target": "quads",
+      "steps": [
+        "前后脚分开站立，重心在两脚之间。",
+        "身体垂直下沉，前腿膝盖不超过脚尖太多，后膝接近地面。",
+        "前脚踩实站起，做完一侧再换另一侧。"
+      ]
+    },
+    {
+      "id": "plank",
+      "name": "plank",
+      "zh": "平板支撑",
+      "body_part": "waist",
+      "equipment": "body weight",
+      "target": "abs",
+      "steps": [
+        "肘撑地，肘在肩正下方，身体从头到脚踝成一条直线。",
+        "收紧腹部和臀部，不要塌腰或撅屁股。",
+        "保持呼吸，撑到目标时间；膝痛时改跪姿。"
+      ]
+    },
+    {
+      "id": "push_up",
+      "name": "push-up",
+      "zh": "俯卧撑",
+      "body_part": "chest",
+      "equipment": "body weight",
+      "target": "pectorals",
+      "steps": [
+        "双手略宽于肩撑地，身体成一条直线。",
+        "屈肘下放到胸口接近地面，肘约 45°。",
+        "推起还原，腰不要塌。"
+      ]
+    },
+    {
+      "id": "incline_push_up",
+      "name": "incline push-up",
+      "zh": "上斜俯卧撑",
+      "body_part": "chest",
+      "equipment": "body weight",
+      "target": "pectorals",
+      "steps": [
+        "双手撑在桌沿或椅面上，身体成一条直线。",
+        "屈肘下放，胸口接近支撑面。",
+        "推起还原；支撑越高越轻松。"
+      ]
+    },
+    {
+      "id": "reverse_lunge",
+      "name": "reverse lunge",
+      "zh": "后撤箭步蹲",
+      "body_part": "upper legs",
+      "equipment": "body weight",
+      "target": "quads",
+      "steps": [
+        "站直，一条腿向后撤一大步。",
+        "身体垂直下沉，前腿膝盖对准脚尖，后膝接近地面。",
+        "前脚发力站起回到起点，换另一侧。"
+      ]
+    },
+    {
+      "id": "step_up",
+      "name": "step-up",
+      "zh": "登台阶",
+      "body_part": "upper legs",
+      "equipment": "body weight",
+      "target": "quads",
+      "steps": [
+        "面对一个稳固的低台阶或台阶。",
+        "一只脚踩上去，用上面的腿发力站起，不要蹬后脚。",
+        "慢慢下来，换另一侧。"
+      ]
+    },
+    {
+      "id": "hip_thrust",
+      "name": "hip thrust",
+      "zh": "臀推",
+      "body_part": "upper legs",
+      "equipment": "body weight",
+      "target": "glutes",
+      "steps": [
+        "上背靠在沙发边沿，屈膝踩地，哑铃可放在髋部。",
+        "臀部发力把髋顶到与身体成一条线。",
+        "顶点停 1 秒再放下，不要用腰顶。"
+      ]
+    },
+    {
+      "id": "wall_sit",
+      "name": "wall sit",
+      "zh": "靠墙静蹲",
+      "body_part": "upper legs",
+      "equipment": "body weight",
+      "target": "quads",
+      "steps": [
+        "背贴墙，双脚往前迈一小步，与肩同宽。",
+        "沿墙下滑到屈膝约 90°（以不痛为准）。",
+        "保持呼吸撑住，膝盖不超过脚尖。"
+      ]
+    },
+    {
+      "id": "bird_dog",
+      "name": "bird dog",
+      "zh": "鸟狗",
+      "body_part": "waist",
+      "equipment": "body weight",
+      "target": "abs",
+      "steps": [
+        "四点跪姿，手在肩下、膝在髋下，背部平直。",
+        "对侧手和腿同时伸直，骨盆保持水平。",
+        "停 1 秒收回，换另一侧。"
+      ]
+    },
+    {
+      "id": "side_plank",
+      "name": "side plank",
+      "zh": "侧平板",
+      "body_part": "waist",
+      "equipment": "body weight",
+      "target": "abs",
+      "steps": [
+        "侧卧，用肘和前臂撑地，肘在肩下。",
+        "把髋抬起，身体成一条直线。",
+        "撑住目标时间，换另一侧。"
+      ]
+    },
+    {
+      "id": "superman",
+      "name": "superman",
+      "zh": "超人式",
+      "body_part": "back",
+      "equipment": "body weight",
+      "target": "upper back",
+      "steps": [
+        "俯卧，双臂向前伸直。",
+        "同时抬起手臂和腿，胸口离地，臀腿收紧。",
+        "停 1–2 秒慢慢放下，不要猛甩。"
+      ]
+    },
+    {
+      "id": "crunch",
+      "name": "crunch",
+      "zh": "卷腹",
+      "body_part": "waist",
+      "equipment": "body weight",
+      "target": "abs",
+      "steps": [
+        "仰卧屈膝，双手轻放耳侧或胸前。",
+        "用腹部把肩胛卷离地面，腰贴地。",
+        "慢慢放下，不要用手拉脖子。"
+      ]
+    },
+    {
+      "id": "reverse_crunch",
+      "name": "reverse crunch",
+      "zh": "反向卷腹",
+      "body_part": "waist",
+      "equipment": "body weight",
+      "target": "abs",
+      "steps": [
+        "仰卧，双腿屈膝抬起，腰贴地。",
+        "用腹部把骨盆卷向胸口，臀部微微离地。",
+        "慢慢放下，不要借惯性。"
+      ]
+    },
+    {
+      "id": "mountain_climber",
+      "name": "mountain climber",
+      "zh": "登山跑",
+      "body_part": "cardio",
+      "equipment": "body weight",
+      "target": "abs",
+      "steps": [
+        "俯卧撑起手位，身体成一条直线。",
+        "交替把膝盖往胸口收，速度按呼吸节奏。",
+        "保持髋部稳定，不要上下弹。"
+      ]
+    },
+    {
+      "id": "high_knees",
+      "name": "high knees",
+      "zh": "原地高抬腿",
+      "body_part": "cardio",
+      "equipment": "body weight",
+      "target": "quads",
+      "steps": [
+        "站直，交替把膝盖抬到髋高。",
+        "前脚掌轻落地，手臂自然摆动。",
+        "按时间或次数做，喘得厉害就放慢。"
+      ]
+    },
+    {
+      "id": "cat_cow",
+      "name": "cat cow",
+      "zh": "猫牛式",
+      "body_part": "back",
+      "equipment": "body weight",
+      "target": "spine",
+      "steps": [
+        "四点跪姿，手在肩下、膝在髋下。",
+        "吸气塌腰抬头，呼气拱背低头。",
+        "慢速来回，配合呼吸做 8–10 次。"
+      ]
+    },
+    {
+      "id": "hip_flexor_stretch",
+      "name": "hip flexor stretch",
+      "zh": "髋屈肌拉伸",
+      "body_part": "upper legs",
+      "equipment": "body weight",
+      "target": "hip flexors",
+      "steps": [
+        "半跪姿，后腿膝盖垫软垫。",
+        "收紧臀部，把髋轻轻向前推，感觉后腿髋前侧拉长。",
+        "保持 20–30 秒，换另一侧，不要塌腰。"
+      ]
+    },
+    {
+      "id": "calf_stretch",
+      "name": "calf stretch",
+      "zh": "小腿拉伸",
+      "body_part": "lower legs",
+      "equipment": "body weight",
+      "target": "calves",
+      "steps": [
+        "面墙站立，双手扶墙，一腿后撤、脚跟踩实。",
+        "前腿屈膝，重心前移，感觉后腿小腿拉长。",
+        "保持 20–30 秒，换另一侧。"
+      ]
+    }
+  ]
+}

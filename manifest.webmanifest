@@ -1,0 +1,20 @@
+{
+  "name": "AI 私人教练",
+  "short_name": "教练",
+  "description": "数据存在自己 GitHub 私有仓库里的训练与饮食记录",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#050607",
+  "theme_color": "#050607",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

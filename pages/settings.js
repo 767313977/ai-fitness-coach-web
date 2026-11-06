@@ -1,0 +1,154 @@
+﻿// @ts-check
+/** 设置：账号、连接测试、数据导出、缓存、演示模式。 */
+import { h, banner, toast } from '../js/ui.js';
+import { clearCache } from '../js/api.js';
+
+const AUTH_KEY = 'afc.auth.v1';
+const DEMO_KEY = 'afc.demo';
+
+/** @param {any} ctx */
+export function renderSettings(ctx) {
+  const { state } = ctx;
+  const wrap = h('div');
+
+  if (state.demo) {
+    wrap.append(banner('当前是演示模式，所有数据都是假的，提交也不会生效。', 'info'));
+    const grid = h('div', { class: 'grid-2' });
+    grid.append(h('div', { class: 'stack' },
+      h('section', { class: 'card' },
+        h('div', { class: 'card-title' }, state.auth ? '演示模式' : '切换到真实仓库'),
+        h('button', { class: 'btn primary block', onClick: () => {
+          sessionStorage.removeItem(DEMO_KEY);
+          location.hash = '#/settings';
+          location.reload();
+        } }, state.auth ? '退出演示，回到我的仓库' : '用 PAT 连接我的仓库'),
+      ),
+      exportCard(ctx),
+    ));
+    grid.append(h('div', { class: 'stack' }, aboutCard()));
+    wrap.append(grid);
+    return wrap;
+  }
+
+  const auth = state.auth;
+  if (!auth) return wrap;
+
+  const left = h('div', { class: 'stack' });
+  const right = h('div', { class: 'stack' });
+
+  left.append(h('section', { class: 'card' },
+    h('div', { class: 'card-title' }, '仓库'),
+    h('div', { class: 'row' },
+      h('div', { class: 'grow' },
+        h('div', { class: 'name' }, `${auth.owner}/${auth.repo}`),
+        h('div', { class: 'sub' }, `PAT ${maskToken(auth.token)} · ${auth.remember ? '已记住' : '仅本次会话'}`),
+      ),
+      h('a', { class: 'chip ice', href: `https://github.com/${auth.owner}/${auth.repo}`, target: '_blank', rel: 'noopener' }, '打开仓库'),
+    ),
+  ));
+
+  const testStatus = h('div', { class: 'hint', style: 'min-height:20px' });
+  left.append(h('section', { class: 'card' },
+    h('div', { class: 'card-title' }, '连接'),
+    h('div', { class: 'field-row' },
+      h('button', { class: 'btn', onClick: async () => {
+        testStatus.textContent = '测试中…';
+        try {
+          const info = await state.api.test();
+          testStatus.textContent = `连接正常 · 体重 ${info.athlete ?? '—'} kg · summary ${info.summaryAt ?? '缺失'}`;
+        } catch (error) {
+          testStatus.textContent = `失败：${error?.message ?? error}`;
+        }
+      } }, '测试连接'),
+      h('button', { class: 'btn ghost', onClick: () => ctx.refresh() }, '重新拉取数据'),
+    ),
+    testStatus,
+  ));
+
+  left.append(exportCard(ctx));
+
+  right.append(h('section', { class: 'card' },
+    h('div', { class: 'card-title' }, '本机缓存'),
+    h('div', { class: 'hint', style: 'margin-bottom:10px' }, '网页会缓存读取过的文件（ETag 做 304 校验），缓存损坏时清一下。退出登录会连缓存一起清掉。'),
+    h('div', { class: 'field-row' },
+      h('button', { class: 'btn small', onClick: () => { clearCache(); toast('缓存已清，正在重新拉取'); ctx.refresh(); } }, '清缓存并刷新'),
+      h('button', { class: 'btn small danger', onClick: () => {
+        if (!confirm('退出后会清掉本机保存的 PAT 和缓存的数据，确定？')) return;
+        clearCache();
+        localStorage.removeItem(AUTH_KEY);
+        sessionStorage.removeItem(AUTH_KEY);
+        sessionStorage.removeItem(DEMO_KEY);
+        location.hash = '#/today';
+        location.reload();
+      } }, '退出登录'),
+    ),
+  ));
+
+  right.append(h('section', { class: 'card' },
+    h('div', { class: 'card-title' }, '演示模式'),
+    h('div', { class: 'hint', style: 'margin-bottom:10px' }, '用假数据看看界面，不会连接 GitHub。'),
+    h('button', { class: 'btn block', onClick: () => {
+      sessionStorage.setItem(DEMO_KEY, '1');
+      location.hash = '#/today';
+      location.reload();
+    } }, '进入演示模式'),
+  ));
+
+  right.append(aboutCard());
+
+  wrap.append(h('div', { class: 'grid-2' }, left, right));
+  return wrap;
+}
+
+/** 导出当前读到的全部数据为 JSON 文件 */
+function exportCard(ctx) {
+  return h('section', { class: 'card' },
+    h('div', { class: 'card-title' }, '导出'),
+    h('div', { class: 'hint', style: 'margin-bottom:10px' },
+      '把当前读到的数据（配置 / 汇总 / 课表 / 复盘索引 / 五张 CSV：daily、strength、diet、checkin、body）打包成一个 JSON 下载。原始文件仍然在仓库里。'),
+    h('button', { class: 'btn block', onClick: () => {
+      const d = ctx.data ?? {};
+      const payload = {
+        exported_at: new Date().toISOString(),
+        source: ctx.state.demo ? 'demo' : `${ctx.state.auth?.owner}/${ctx.state.auth?.repo}`,
+        config: d.config,
+        summary: d.summary,
+        routine: d.routine,
+        review_index: d.reviewIndex,
+        daily: d.daily,
+        strength: d.strength,
+        diet: d.diet,
+        checkin: d.checkin,
+        body: d.body,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ai-fitness-coach-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      toast('已导出');
+    } }, '下载 JSON'),
+  );
+}
+
+function aboutCard() {
+  return h('section', { class: 'card' },
+    h('div', { class: 'card-title' }, '关于'),
+    h('div', { class: 'hint' },
+      'Web 版是手机 App 之外的第二个客户端：读 GitHub Contents API；数据写入只通过 Actions，唯一例外是导入 Hevy 时先把 CSV 上传到 uploads/（需要 Contents 读写权限）。',
+      h('br'),
+      '数据和 App 完全同源，不经过任何中间服务器。',
+      h('br'),
+      '动作库数据 © hasaneyldrm/exercises-dataset（MIT），不含 Gym visual 的图片/GIF。',
+      h('br'),
+      '版本 web-0.2.0 · 契约见仓库 docs/数据契约.md'),
+  );
+}
+
+function maskToken(token) {
+  if (!token) return '—';
+  if (token.length <= 12) return '****';
+  return `${token.slice(0, 4)}…${token.slice(-4)}`;
+}
