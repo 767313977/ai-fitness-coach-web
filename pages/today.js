@@ -1,4 +1,4 @@
-﻿// @ts-check
+// @ts-check
 /** 今天：今日课表 + 本周还差什么 + 快捷记录 + 数据状态。 */
 import { h, icon, banner } from '../js/ui.js';
 import { dayFor, cycleLabel, weekGaps, exerciseHistory, fmtDate, fmtNum, todayISO } from '../js/data.js';
@@ -97,7 +97,7 @@ function strengthCard(plan, summary) {
         h('td', { class: 'muted' }, index + 1),
         h('td', {}, h('div', { class: 'name' }, ex.name), ex.cue ? h('div', { class: 'sub' }, ex.cue) : null),
         h('td', { class: 'muted' }, repLabel(ex), h('br'), weightLabel(ex)),
-        h('td', { class: 'muted' }, last ? `${last.date ? fmtDate(last.date) : ''} ${fmtNum(last.weight_kg)}×${fmtNum(last.reps)}` : '—'),
+        h('td', { class: 'muted' }, last ? `${last.date ? fmtDate(last.date) : ''} ${lastValueText(last)}` : '—'),
         h('td', {}, last?.next_hint ? h('span', { class: 'chip lime' }, last.next_hint) : h('span', { class: 'muted' }, '—')),
       );
     })),
