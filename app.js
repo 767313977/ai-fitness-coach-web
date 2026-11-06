@@ -1,4 +1,4 @@
-﻿// @ts-check
+// @ts-check
 /** 应用外壳：登录、路由、数据加载、侧边栏。 */
 import { ApiError, GitHubApi, clearCache, setCachePersistence } from './js/api.js';
 import { loadAll, todayISO, fmtDate } from './js/data.js';
@@ -152,6 +152,7 @@ function render() {
   main.append(content);
   shell.append(main);
   app.append(shell);
+  app.append(bottomNav());
 }
 
 function pageView() {
@@ -235,6 +236,43 @@ function topbar() {
   );
 }
 
+let moreOpen = false;
+
+/** 窄屏底部导航：今天 / 记录 / 本周 / 复盘 / 更多（动作库与设置） */
+function bottomNav() {
+  const section = state.route[0] || 'today';
+  const items = [
+    { key: 'today', label: '今天', icon: 'today' },
+    { key: 'record', label: '记录', icon: 'record' },
+    { key: 'week', label: '本周', icon: 'week' },
+    { key: 'review', label: '复盘', icon: 'review' },
+  ];
+  const nav = h('nav', { class: 'bottom-nav' },
+    items.map((item) => h('a', {
+      class: section === item.key ? 'on' : '',
+      href: `#/${item.key}`,
+      onClick: (event) => { event.preventDefault(); moreOpen = false; navigate(`/${item.key}`); },
+    }, icon(item.icon), h('span', {}, item.label))),
+    h('button', {
+      class: moreOpen ? 'on' : '',
+      onClick: (event) => { event.stopPropagation(); moreOpen = !moreOpen; render(); },
+    }, icon('settings'), h('span', {}, '更多')),
+  );
+
+  if (moreOpen) {
+    nav.append(h('div', { class: 'more-sheet', onClick: (event) => event.stopPropagation() },
+      h('a', {
+        href: '#/library',
+        onClick: (event) => { event.preventDefault(); moreOpen = false; navigate('/library'); },
+      }, icon('library'), h('span', {}, '动作库')),
+      h('a', {
+        href: '#/settings',
+        onClick: (event) => { event.preventDefault(); moreOpen = false; navigate('/settings'); },
+      }, icon('settings'), h('span', {}, '设置')),
+    ));
+  }
+  return nav;
+}
 function loginView() {
   const saved = loadAuth();
   const owner = h('input', { id: 'owner', class: 'input', placeholder: '你的 GitHub 用户名', value: saved?.owner ?? '' });
@@ -348,6 +386,7 @@ window.addEventListener('beforeunload', (event) => {
 // ---------------- 启动 ----------------
 
 window.addEventListener('hashchange', () => {
+  moreOpen = false;
   state.route = parseRoute();
   render();
   window.scrollTo({ top: 0 });

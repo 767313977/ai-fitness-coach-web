@@ -1,4 +1,4 @@
-﻿// @ts-check
+// @ts-check
 /** 动作库：本计划动作 + 动作检索 + 中文分步说明 + 训练历史。 */
 import { h, clear, banner, lineChart } from '../js/ui.js';
 import { fmtNum, fmtDate, num } from '../js/data.js';
@@ -88,7 +88,7 @@ export function renderLibrary(ctx) {
               onClick: () => select(item, null),
             },
               h('div', { class: 'n' }, item.zh ?? item.name),
-              h('div', { class: 't' }, `${item.name} · ${item.equipment}`),
+              h('div', { class: 't en' }, `${item.name} · ${item.equipment}`),
             );
           }))
         : h('div', { class: 'empty' }, '没有匹配的动作，换个关键词'),

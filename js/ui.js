@@ -1,4 +1,4 @@
-﻿// @ts-check
+// @ts-check
 /** DOM 小工具、图标、toast、Markdown 渲染、SVG 图表。 */
 
 /**
@@ -180,13 +180,25 @@ function inline(text) {
   return text
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+      const href = safeHref(url);
+      return href
+        ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`
+        : `${text}（${url}）`;
+    });
 }
 
 /** @param {string} text */
+function safeHref(url) {
+  const value = String(url).trim();
+  if (/^(https?:|#|\/|\.\/|\.\.\/)/i.test(value)) return value;
+  return null;
+}
+
 function escapeHtml(text) {
   return text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /**
@@ -245,6 +257,11 @@ export function lineChart(points, opts = {}) {
   // 固定范围也要把数据包住（例如红线固定 4 分，但数据到了 6 分）
   if (dataMax > max) max = dataMax + Math.max(pad, (dataMax - dataMin) * 0.1);
   if (dataMin < min) min = Math.max(0, dataMin - Math.max(pad, (dataMax - dataMin) * 0.1));
+  // 红线也要包进纵轴范围，不能画到图外
+  if (opts.redline != null && opts.yMin == null && opts.yMax == null) {
+    min = Math.min(min, opts.redline);
+    max = Math.max(max, opts.redline);
+  }
   if (max <= min) max = min + 1;
   const span = max - min;
   const y = (v) => H - padB - ((v - min) / span) * (H - padT - padB);

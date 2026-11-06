@@ -1,4 +1,4 @@
-﻿// @ts-check
+// @ts-check
 /** 本周：关键数字 + 趋势图 + 记录热力图 + 数据新鲜度。 */
 import { h, banner, lineChart, barChart, heatmap } from '../js/ui.js';
 import { fmtNum, fmtDate, num } from '../js/data.js';
@@ -46,7 +46,7 @@ export function renderWeek(ctx) {
       h('div', { class: 'card-head' },
         h('div', { class: 'grow' },
           h('h3', {}, '体重趋势'),
-          h('div', { class: 'sub' }, `${weekRange(s.week)} · 周均体重`),
+          h('div', { class: 'sub' }, '近 4 周 · 周均体重'),
         ),
         h('span', { class: 'chip' }, '只改方向不改口径'),
       ),

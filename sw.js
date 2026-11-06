@@ -1,6 +1,6 @@
 ﻿// @ts-check
 /** Service Worker：只缓存应用外壳，数据永远走网络（git 仓库里的健康数据不进 SW 缓存）。 */
-const CACHE = 'afc-shell-v4';
+const CACHE = 'afc-shell-v5';
 const SHELL = [
   './',
   './index.html',

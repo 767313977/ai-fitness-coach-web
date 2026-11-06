@@ -181,6 +181,14 @@ function statusCard(data, summary, navigate) {
   );
 }
 
+function lastValueText(last) {
+  if (!last) return '—';
+  if (last.hold_s != null && Number(last.hold_s) > 0) return `${fmtNum(last.hold_s)} 秒`;
+  const weight = Number(last.weight_kg);
+  const reps = last.reps != null ? fmtNum(last.reps) : '—';
+  if (!Number.isFinite(weight) || weight === 0) return `自重 ×${reps}`;
+  return `${fmtNum(weight)}×${reps}`;
+}
 function repLabel(ex) {
   const core = ex.hold_s != null
     ? `${ex.sets}×${ex.hold_s} 秒`
