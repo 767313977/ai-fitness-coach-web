@@ -837,6 +837,56 @@ test('discardTask：有 uploadPath 但没有 api 时保留任务和恢复记录'
   assert.match(unsentTasks()[0].cleanupError ?? '', /没有可用的仓库连接/);
 });
 
+test('Hevy 上传：Base64 转换后锁被接管，绝不调用 putFile', async () => {
+  freshEnv();
+  const restore = useIdbLease();
+  try {
+    const api = makeApi();
+    const csv = 'start_time,exercise_title\n2026-11-07,Squat';
+    const file = {
+      name: 'hevy.csv',
+      size: csv.length,
+      type: 'text/csv',
+      slice: () => ({ text: async () => csv }),
+      arrayBuffer: async () => {
+        // 模拟 Base64 转换期间另一个标签页接管租约
+        seedLease({ id: 'other-tab', until: Date.now() + 60_000 });
+        return new TextEncoder().encode(csv).buffer;
+      },
+    };
+    const queued = enqueueHevyImport(api, file, () => {});
+    await assert.rejects(queued.promise, /写入锁/);
+    assert.equal(api.calls.upload, 0);
+    // 任务保留，且因为还没上传，不能伪造 uploadPath
+    assert.equal(unsentCount(), 1);
+    assert.equal(unsentTasks()[0].uploadPath, undefined);
+  } finally {
+    restore();
+  }
+});
+
+test('Hevy 上传：Base64 转换后锁仍有效时正常上传', async () => {
+  freshEnv();
+  const restore = useIdbLease();
+  try {
+    const csv = 'start_time,exercise_title\n2026-11-07,Squat';
+    const file = {
+      name: 'hevy.csv',
+      size: csv.length,
+      type: 'text/csv',
+      slice: () => ({ text: async () => csv }),
+      arrayBuffer: async () => new TextEncoder().encode(csv).buffer,
+    };
+    const api = makeApi({ findRun: () => completedSuccess });
+    const queued = enqueueHevyImport(api, file, () => {});
+    const result = await queued.promise;
+    assert.equal(result.state, 'success');
+    assert.equal(api.calls.upload, 1);
+  } finally {
+    restore();
+  }
+});
+
 test('pendingSummary：终态不需要继续检查，未知类型有兜底文案', () => {
   const summary = pendingSummary([{ id: 'a', kind: 'diet', status: 'failure', createdAt: '' }]);
   assert.equal(summary.needsCheck, false);

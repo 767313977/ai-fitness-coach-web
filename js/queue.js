@@ -889,14 +889,23 @@ export function enqueueHevyImport(api, file, onStatus) {
       // 先做本地校验，避免把明显错误的文件传上去再失败
       const invalid = await validateFile(file);
       if (invalid) throw definitiveError(invalid);
-      // 上传也是写入：必须确认锁还在自己手上
-      await assertLease();
       onStatus('上传 CSV');
       const base = file.name.replace(/[^\w.\-]+/g, '_');
       const safeName = base.replace(/\.csv$/i, '') + '.csv';
       const path = `uploads/hevy/${current.requestId}-${safeName}`;
+
+      let base64;
       try {
-        const base64 = await fileToBase64(file);
+        base64 = await fileToBase64(file);
+      } catch (error) {
+        throw definitiveError(`读取 CSV 失败：${error?.message ?? error}。请重新选择文件。`);
+      }
+
+      // Base64 转换是异步的：转换完成后、真正上传之前再确认一次锁，
+      // 尽量缩小「检查通过 → 网络写入」之间的窗口。锁失效时绝不 putFile。
+      await assertLease();
+
+      try {
         await api.putFile(path, base64, `upload: hevy [${current.requestId}]`);
       } catch (error) {
         throw definitiveError(`CSV 上传失败：${error?.message ?? error}。请重新选择文件。`);
