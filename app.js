@@ -6,9 +6,9 @@ import { h, clear, icon, toast, banner } from './js/ui.js';
 import { DEMO_DATA } from './js/demo.js';
 import { noticeFromError, offlineText } from './js/status.js';
 import {
-  clearLocalState, discardTask, hasPending, hevyRecoveryTasks, pendingCleanups, pendingSummary,
-  pruneStaleTasks, resumeUnfinished, runCleanups, setQueueScope, dropOtherScopes, unsentCount,
-  unsentTasks,
+  clearLocalState, discardTask, hasPending, hevyRecoveryTasks, lastCleanupPersistError,
+  pendingCleanups, pendingSummary, pruneStaleTasks, resumeUnfinished, runCleanups, setQueueScope,
+  dropOtherScopes, unsentCount, unsentTasks,
 } from './js/queue.js';
 import { renderToday } from './pages/today.js';
 import { renderWeek } from './pages/week.js';
@@ -36,7 +36,7 @@ const state = {
   /** @type {string[]} */
   route: [],
   refreshing: false,
-  /** @type {{kind: 'offline'|'rate-limit', text: string}|null} 常驻状态：离线 / 限流 */
+  /** @type {{kind: 'offline'|'rate-limit'|'storage', text: string}|null} 常驻状态：离线 / 限流 / 本地存储异常 */
   notice: null,
 };
 
@@ -134,11 +134,19 @@ async function connect(opts = {}) {
       setQueueScope(`${auth.owner}/${auth.repo}@${picked.branch}`);
       dropOtherScopes();
       pruneStaleTasks();
+      const pruneError = lastCleanupPersistError();
       state.data = await loadAll(state.api, { fresh: Boolean(opts.fresh) });
       // 成功加载后：只有确实回落缓存才保留离线提示，联网恢复即自动消失
       state.notice = state.data.offline
         ? { kind: 'offline', text: offlineText(state.data.offlineAt) }
         : null;
+      if (pruneError) {
+        // 清理队列写不进去时宁可保留原任务，也不能静默丢掉远程文件路径
+        state.notice = {
+          kind: 'storage',
+          text: `本机存储写入失败，过期任务没有清理（远程文件路径仍保留）：${pruneError}`,
+        };
+      }
     }
   } catch (error) {
     state.error = /** @type {Error} */ (error);
@@ -197,7 +205,9 @@ function render() {
         h('div', { class: 'hint', style: 'margin-top:8px' },
           state.notice.kind === 'offline'
             ? '离线期间不会丢数据；提交会被保留，联网后继续检查。'
-            : '限流只影响读取，不会重复写入；恢复后点「重试」即可。'),
+            : state.notice.kind === 'storage'
+              ? '请清理浏览器存储空间或退出隐私模式后再试；任务和远程文件路径都还在。'
+              : '限流只影响读取，不会重复写入；恢复后点「重试」即可。'),
       ));
     }
     const unsent = state.demo ? 0 : unsentCount();

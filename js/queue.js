@@ -330,21 +330,44 @@ function readCleanups() {
   }
 }
 
-/** @param {any[]} list */
+/** localStorage 是否可用；失败原因供页面提示。 */
+let lastStorageError = '';
+
+/** @param {any[]} list @returns {boolean} 是否真的写进了 localStorage */
 function writeCleanups(list) {
   const store = localStore();
-  if (!store) return;
-  try { store.setItem(CLEANUP_KEY, JSON.stringify(list)); } catch { /* 忽略 */ }
+  if (!store) {
+    lastStorageError = '本机 localStorage 不可用';
+    return false;
+  }
+  try {
+    store.setItem(CLEANUP_KEY, JSON.stringify(list));
+    return true;
+  } catch (error) {
+    lastStorageError = error?.name === 'QuotaExceededError'
+      ? '本机存储配额已满'
+      : (error?.message ?? String(error));
+    return false;
+  }
 }
 
-/** @param {any} item */
+/**
+ * 把远程文件路径写入清理队列。
+ * @param {any} item
+ * @returns {boolean} 只有确认持久化成功才返回 true
+ */
 function enqueueCleanup(item) {
   const list = readCleanups();
   const next = { ...item, scope: item.scope || scope };
   const index = list.findIndex((row) => row.requestId === next.requestId || row.path === next.path);
   if (index >= 0) list[index] = { ...list[index], ...next };
   else list.push(next);
-  writeCleanups(list);
+  return writeCleanups(list);
+}
+
+/** 最近一次清理队列持久化失败的原因；空字符串表示没有错误。 */
+export function lastCleanupPersistError() {
+  return lastStorageError;
 }
 
 /** @param {string} requestId */
@@ -387,6 +410,7 @@ export async function runCleanups(api) {
  * @returns {number} 清掉的任务数
  */
 export function pruneStaleTasks(maxAgeMs = 7 * 86_400_000, now = Date.now()) {
+  lastStorageError = '';
   const isStale = (item) => {
     const at = Date.parse(item?.updatedAt || item?.createdAt || '');
     return Number.isFinite(at) && at < now - maxAgeMs;
@@ -394,35 +418,47 @@ export function pruneStaleTasks(maxAgeMs = 7 * 86_400_000, now = Date.now()) {
   const tasks = readTasks();
   const recovery = readRecovery();
 
-  // 过期任务里的远程文件不能跟着本地任务一起丢：转入清理队列，删成功才移除索引
+  // 过期任务里的远程文件不能跟着本地任务一起丢：只有清理队列持久化成功，才允许删本地索引
+  const persistedTaskIds = new Set();
   for (const task of tasks) {
     if (!isStale(task) || !task.uploadPath) continue;
-    enqueueCleanup({
+    const saved = enqueueCleanup({
       requestId: task.requestId,
       path: task.uploadPath,
       scope: task.scope || scope,
       createdAt: task.createdAt,
     });
+    if (saved) persistedTaskIds.add(task.id);
   }
+  const persistedRecoveryIds = new Set();
   for (const record of recovery) {
-    if (!isStale(record)) continue;
+    if (!isStale(record) || !record.path) continue;
     if (tasks.some((task) => task.requestId === record.requestId)) continue;
-    enqueueCleanup({
+    const saved = enqueueCleanup({
       requestId: record.requestId,
       path: record.path,
       scope: record.scope || scope,
       createdAt: record.createdAt,
     });
+    if (saved) persistedRecoveryIds.add(record.requestId);
   }
 
-  const keptTasks = tasks.filter((item) => !isStale(item));
+  const keptTasks = tasks.filter((item) => (
+    !isStale(item) || (item.uploadPath && !persistedTaskIds.has(item.id))
+  ));
   if (keptTasks.length !== tasks.length) writeTasks(keptTasks);
 
   const receipts = readReceipts();
   const keptReceipts = receipts.filter((item) => !isStale(item));
   if (keptReceipts.length !== receipts.length) writeReceipts(keptReceipts);
 
-  const keptRecovery = recovery.filter((item) => !isStale(item));
+  const keptRecovery = recovery.filter((item) => {
+    if (!isStale(item)) return true;
+    if (!item.path) return false;
+    if (persistedRecoveryIds.has(item.requestId)) return false;
+    // 对应的任务因为清理队列写失败而保留时，恢复记录也必须一起保留
+    return keptTasks.some((task) => task.requestId === item.requestId);
+  });
   if (keptRecovery.length !== recovery.length) writeRecovery(keptRecovery);
 
   return tasks.length - keptTasks.length;
@@ -534,34 +570,67 @@ function claimLease(now) {
   }));
 }
 
-function mutateLease(mutator) {
-  return openLockDb().then((db) => new Promise((resolve) => {
+/**
+ * 续期/释放专用事务：失败会 reject，调用方必须处理。
+ * @param {(store: any, lease: any) => void} mutator
+ */
+function updateLease(mutator) {
+  return openLockDb().then((db) => new Promise((resolve, reject) => {
     let tx;
-    try { tx = db.transaction(IDB_STORE, 'readwrite'); } catch { resolve(); return; }
+    try { tx = db.transaction(IDB_STORE, 'readwrite'); } catch (error) { reject(error); return; }
     const store = tx.objectStore(IDB_STORE);
     const get = store.get(IDB_KEY);
+    /** @type {Error|null} */
+    let failure = null;
     get.onsuccess = () => {
-      try { mutator(store, get.result); } catch { /* 忽略单次失败 */ }
+      try { mutator(store, get.result); } catch (error) { failure = error; }
     };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
-    tx.onabort = () => resolve();
-  })).catch(() => { /* 续期/释放失败交给过期机制 */ });
+    get.onerror = () => { failure = get.error ?? new Error('读取租约失败'); };
+    tx.oncomplete = () => { if (failure) reject(failure); else resolve(); };
+    tx.onerror = () => reject(tx.error ?? new Error('租约事务失败'));
+    tx.onabort = () => reject(tx.error ?? new Error('租约事务中止'));
+  }));
 }
 
 let leaseTimer = 0;
+/** 当前标签页是否仍持有可用租约（仅 IndexedDB 兜底路径使用） */
+let leaseHeld = false;
+/** 本地记录的租约到期时间，用于在 IDB 不可用时也能 fail closed */
+let leaseUntil = 0;
+/** 最近一次锁丢失/续期失败的原因 */
+let leaseLostReason = '';
 
-function renewLease() {
-  void mutateLease((store, lease) => {
-    if (shouldRenewLease(lease, TAB_ID)) {
+function locksAvailable() {
+  return typeof navigator !== 'undefined'
+    && Boolean(navigator.locks)
+    && typeof navigator.locks.request === 'function';
+}
+
+function markLeaseLost(reason) {
+  leaseHeld = false;
+  leaseUntil = 0;
+  leaseLostReason = reason;
+}
+
+async function renewLease() {
+  if (!leaseHeld) return;
+  try {
+    await updateLease((store, lease) => {
+      if (!lease || lease.id !== TAB_ID) {
+        throw new Error('另一个标签页已接管写入锁');
+      }
       store.put({ id: TAB_ID, until: Date.now() + leaseDuration() }, IDB_KEY);
-    }
-  });
+      leaseUntil = Date.now() + leaseDuration();
+    });
+  } catch (error) {
+    // 续期失败不能静默：标记失效，后续任何派发前的 assertLease 都会拒绝
+    markLeaseLost(`续期失败：${error?.message ?? error}`);
+  }
 }
 
 function startLeaseHeartbeat() {
   stopLeaseHeartbeat();
-  const timer = setInterval(renewLease, Math.max(10, Math.floor(leaseDuration() / 4)));
+  const timer = setInterval(() => { void renewLease(); }, Math.max(10, Math.floor(leaseDuration() / 4)));
   // Node 测试环境下不要阻止进程退出
   if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
   leaseTimer = timer;
@@ -572,11 +641,66 @@ function stopLeaseHeartbeat() {
   leaseTimer = 0;
 }
 
+/**
+ * 派发任何新的写入之前调用：确认当前标签页仍持有有效租约。
+ * Web Locks 模式下浏览器保证回调期间锁不丢，直接放行；
+ * IndexedDB 兜底模式必须读一次真实租约，读不到/不是自己的就拒绝。
+ */
+export async function assertLease() {
+  if (locksAvailable()) return;
+  if (!leaseHeld) {
+    throw new Error(`写入锁已失效${leaseLostReason ? `（${leaseLostReason}）` : ''}，已停止新的提交`);
+  }
+  if (Date.now() >= leaseUntil) {
+    markLeaseLost('租约已过期');
+    throw new Error('写入锁已过期，已停止新的提交');
+  }
+  let lease;
+  try {
+    lease = await readLease();
+  } catch (error) {
+    markLeaseLost(`无法确认锁状态：${error?.message ?? error}`);
+    throw new Error(`无法确认写入锁状态（${error?.message ?? error}），已停止新的提交`);
+  }
+  if (!lease || lease.id !== TAB_ID || isLeaseExpired(lease)) {
+    markLeaseLost('已被其他标签页接管或已过期');
+    throw new Error('写入锁已被其他标签页接管或已过期，已停止新的提交');
+  }
+  // 通过检查后顺延期，避免检查完立刻过期
+  try {
+    await updateLease((store, current) => {
+      if (!current || current.id !== TAB_ID) throw new Error('另一个标签页已接管写入锁');
+      store.put({ id: TAB_ID, until: Date.now() + leaseDuration() }, IDB_KEY);
+      leaseUntil = Date.now() + leaseDuration();
+    });
+  } catch (error) {
+    markLeaseLost(`续期失败：${error?.message ?? error}`);
+    throw new Error(`续期写入锁失败（${error?.message ?? error}），已停止新的提交`);
+  }
+}
+
+function readLease() {
+  return openLockDb().then((db) => new Promise((resolve, reject) => {
+    let tx;
+    try { tx = db.transaction(IDB_STORE, 'readonly'); } catch (error) { reject(error); return; }
+    const get = tx.objectStore(IDB_STORE).get(IDB_KEY);
+    let value = null;
+    get.onsuccess = () => { value = get.result ?? null; };
+    get.onerror = () => reject(get.error ?? new Error('读取租约失败'));
+    tx.oncomplete = () => resolve(value);
+    tx.onerror = () => reject(tx.error ?? new Error('读取租约事务失败'));
+    tx.onabort = () => reject(tx.error ?? new Error('读取租约事务中止'));
+  }));
+}
+
 async function acquireLease() {
   let lastError = null;
   for (let i = 0; i < 420; i += 1) {
     try {
       if (await claimLease(Date.now())) {
+        leaseHeld = true;
+        leaseUntil = Date.now() + leaseDuration();
+        leaseLostReason = '';
         // 运行超过租约时长时持续续期；标签页崩溃后心跳停止，租约自然过期
         startLeaseHeartbeat();
         return;
@@ -595,9 +719,13 @@ async function acquireLease() {
 
 async function releaseLease() {
   stopLeaseHeartbeat();
-  await mutateLease((store, lease) => {
-    if (lease?.id === TAB_ID) store.delete(IDB_KEY);
-  });
+  leaseHeld = false;
+  leaseUntil = 0;
+  try {
+    await updateLease((store, lease) => {
+      if (lease?.id === TAB_ID) store.delete(IDB_KEY);
+    });
+  } catch { /* 释放失败就等它自然过期 */ }
 }
 
 /**
@@ -685,6 +813,7 @@ function runTask(api, task, opts = {}) {
           inputs: task.inputs,
           requestId: task.requestId,
           onStatus,
+          beforeDispatch: assertLease,
           findTimeoutMs: opts.findTimeoutMs,
           runTimeoutMs: opts.runTimeoutMs,
           pollMs: opts.pollMs,
@@ -760,6 +889,8 @@ export function enqueueHevyImport(api, file, onStatus) {
       // 先做本地校验，避免把明显错误的文件传上去再失败
       const invalid = await validateFile(file);
       if (invalid) throw definitiveError(invalid);
+      // 上传也是写入：必须确认锁还在自己手上
+      await assertLease();
       onStatus('上传 CSV');
       const base = file.name.replace(/[^\w.\-]+/g, '_');
       const safeName = base.replace(/\.csv$/i, '') + '.csv';
@@ -903,17 +1034,24 @@ export async function discardTask(id, api) {
   const task = readTasks().find((item) => item.id === id);
   if (!task) return { ok: true };
 
-  if (api && task.uploadPath && typeof api.deleteFile === 'function') {
+  const fail = (message) => {
+    setTaskStatus(task.id, task.status || RUN_STATE.unknown, {
+      cleanupError: message,
+      cleanupAttempts: Number(task.cleanupAttempts || 0) + 1,
+    });
+    return { ok: false, error: message };
+  };
+
+  // 有上传文件就必须先删远程；没有 api 也不能假装清理成功
+  if (task.uploadPath) {
+    if (!api || typeof api.deleteFile !== 'function') {
+      return fail('没有可用的仓库连接，无法删除远程临时文件');
+    }
     try {
       // 404 已在 deleteFile 内部视为成功；其它错误都要保留恢复记录
       await api.deleteFile(task.uploadPath, `cleanup: hevy [${task.requestId}]`);
     } catch (error) {
-      const message = error?.message ?? String(error);
-      setTaskStatus(task.id, task.status || RUN_STATE.unknown, {
-        cleanupError: message,
-        cleanupAttempts: Number(task.cleanupAttempts || 0) + 1,
-      });
-      return { ok: false, error: message };
+      return fail(error?.message ?? String(error));
     }
   }
 

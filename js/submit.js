@@ -67,6 +67,7 @@ export async function waitForRun(api, run, opts = {}) {
  * @param {import('./api.js').GitHubApi} api
  * @param {{workflow: string, inputs: Record<string,string>, requestId?: string,
  *          onStatus?: (s: string, detail?: any) => void,
+ *          beforeDispatch?: () => Promise<void>,
  *          findTimeoutMs?: number, runTimeoutMs?: number, pollMs?: number}} opts
  */
 export async function runWorkflow(api, opts) {
@@ -86,8 +87,10 @@ export async function runWorkflow(api, opts) {
   }
 
   if (!run) {
+    status('派发中');
+    // 派发前必须再次确认写入锁仍属于当前标签页；锁丢了直接中止，不能当成“结果未知”再核对
+    if (opts.beforeDispatch) await opts.beforeDispatch();
     try {
-      status('派发中');
       await api.dispatch(opts.workflow, { ...opts.inputs, request_id: id });
     } catch (error) {
       // 网络异常：先按 request_id 再查一次，可能已经派发成功但响应丢了

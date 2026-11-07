@@ -88,6 +88,26 @@ test('派发失败且核对也失败：保留原错误，不重试', async () =>
   assert.equal(api.calls.dispatch, 1);
 });
 
+test('派发前的锁校验失败时立即中止，不派发也不重试', async () => {
+  const api = makeApi();
+  let guarded = 0;
+  await assert.rejects(
+    runWorkflow(api, {
+      workflow: 'checkin.yml',
+      inputs: {},
+      requestId: 'abcd1234',
+      beforeDispatch: async () => {
+        guarded += 1;
+        throw new Error('写入锁已失效');
+      },
+    }),
+    /写入锁已失效/,
+  );
+  assert.equal(guarded, 1);
+  assert.equal(api.calls.dispatch, 0);
+  assert.equal(api.calls.find, 1);
+});
+
 test('resumeWorkflow：查询失败抛错，不伪装成 unknown', async () => {
   const api = makeApi({ findOnce: () => { throw new Error('403'); } });
   await assert.rejects(resumeWorkflow(api, { requestId: 'abcd1234' }), /查询运行记录失败/);
