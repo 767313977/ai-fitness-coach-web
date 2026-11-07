@@ -1,5 +1,5 @@
-﻿{
-  "note": "精选动作库（30 个）。完整 1324 动作数据集见 hasaneyldrm/exercises-dataset（MIT），需要把 data/exercises.json 换成完整版；本文件是我们手写的常用动作 + 中文步骤，避免网页首次加载 17MB。",
+{
+  "note": "精选动作库（30 个）。完整 1324 动作数据集见 hasaneyldrm/exercises-dataset（MIT），需要把 data/exercises.json 换成完整版；本文件是我们手写的常用动作 + 中英步骤，避免网页首次加载 17MB。",
   "license": "动作说明为本项目原创；动作用语参考通用训练常识。不含 Gym visual 的图片/GIF。",
   "exercises": [
     {
@@ -13,6 +13,13 @@
         "双手捧住一只哑铃贴在胸前，双脚略宽于肩，脚尖微微外八。",
         "屈髋屈膝下蹲，膝盖顺着脚尖方向打开，蹲到能保持背部中立的最低点。",
         "脚掌踩实地面，脚跟发力站起，站直时不要过度挺腰。"
+      ],
+      "steps_en": [
+        "Stand with your feet shoulder-width apart, holding a dumbbell vertically against your chest with both hands.",
+        "Keeping your chest up and core engaged, lower your body down into a squat position by pushing your hips back and bending your knees.",
+        "Continue lowering until your thighs are parallel to the ground, or as low as you can comfortably go.",
+        "Pause for a moment at the bottom, then push through your heels to return to the starting position.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -26,6 +33,11 @@
         "身后放一把椅子或箱子，双脚与肩同宽。",
         "屈髋向后坐，臀部轻触椅面后停一下，膝盖对准脚尖。",
         "脚掌踩实站起，全程膝盖不内扣。"
+      ],
+      "steps_en": [
+        "Set a chair or box behind you and stand with your feet shoulder-width apart.",
+        "Push your hips back and lower until your glutes lightly touch the seat; keep your knees tracking over your toes.",
+        "Pause briefly, then drive through your feet to stand; keep your knees from caving inward."
       ]
     },
     {
@@ -39,6 +51,11 @@
         "仰卧屈膝，双脚踩地与髋同宽，脚跟离臀部约一掌。",
         "收紧腹部，用臀部发力把髋顶起，肩到膝成一条直线。",
         "顶点停 1 秒，慢慢放下，不要用腰代偿。"
+      ],
+      "steps_en": [
+        "Lie on your back with your knees bent, feet flat about hip-width apart and a hand-width from your glutes.",
+        "Brace your abs and squeeze your glutes to lift your hips until shoulders, hips and knees form a straight line.",
+        "Hold for one second at the top, then lower slowly; don't arch your lower back."
       ]
     },
     {
@@ -52,6 +69,12 @@
         "站直，双手各持一只哑铃，前脚掌踩实。",
         "慢下 3 秒到脚跟接近地面，再踮起脚尖到最高点。",
         "全程膝盖基本伸直，不要弹震。"
+      ],
+      "steps_en": [
+        "Stand with your feet shoulder-width apart, holding a dumbbell in each hand.",
+        "Raise your heels off the ground as high as possible, using your calves.",
+        "Pause for a moment at the top, then slowly lower your heels back down to the starting position.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -65,6 +88,15 @@
         "仰卧，双臂指向天花板，屈髋屈膝 90°，腰贴地。",
         "对侧手和腿同时慢慢伸出，腰不要离地。",
         "回到中间再换另一侧，动作越慢越稳。"
+      ],
+      "steps_en": [
+        "Lie flat on your back with your arms extended towards the ceiling.",
+        "Bend your knees and lift your legs off the ground, creating a 90-degree angle at your hips and knees.",
+        "Engage your core and lower back to press your lower back into the ground.",
+        "Slowly lower your right arm and left leg towards the ground, keeping them straight and hovering just above the floor.",
+        "Pause for a moment, then return to the starting position.",
+        "Repeat the movement with your left arm and right leg.",
+        "Continue alternating sides for the desired number of repetitions."
       ]
     },
     {
@@ -78,6 +110,11 @@
         "仰卧屈膝，双手各持一只哑铃，肘约 45°。",
         "肩胛收紧贴地，把哑铃推起，手臂伸直但不锁死。",
         "慢慢下放到上臂轻触地面，再推起。"
+      ],
+      "steps_en": [
+        "Lie on your back with your knees bent and a dumbbell in each hand, elbows at about 45 degrees.",
+        "Pull your shoulder blades down and back, then press the dumbbells up until your arms are straight but not locked.",
+        "Lower slowly until your upper arms lightly touch the floor, then press back up."
       ]
     },
     {
@@ -91,6 +128,14 @@
         "一手一膝撑在椅面上，背部保持平直，另一手持哑铃自然下垂。",
         "肩胛先向后收，再把哑铃拉向髋部方向。",
         "慢慢放下到手臂伸直，不要耸肩。"
+      ],
+      "steps_en": [
+        "Stand with your feet shoulder-width apart, holding a dumbbell in one hand with your palm facing your body.",
+        "Bend your knees slightly and hinge forward at the hips, keeping your back straight and your core engaged.",
+        "Let the dumbbell hang straight down towards the floor, with your arm fully extended.",
+        "Pull the dumbbell up towards your chest, keeping your elbow close to your body and squeezing your shoulder blades together.",
+        "Pause for a moment at the top, then slowly lower the dumbbell back down to the starting position.",
+        "Repeat for the desired number of repetitions, then switch sides."
       ]
     },
     {
@@ -104,6 +149,13 @@
         "坐在有靠背的椅子上，双手各持一只哑铃举到肩高。",
         "背部贴住椅背，把哑铃向上推起，手臂伸直但不锁死。",
         "慢慢下放回肩高，不要塌腰。"
+      ],
+      "steps_en": [
+        "Sit on a bench with a dumbbell in each hand, resting on your thighs.",
+        "Raise the dumbbells to shoulder height, palms facing forward.",
+        "Press the dumbbells upward until your arms are fully extended overhead.",
+        "Pause for a moment at the top, then slowly lower the dumbbells back to shoulder height.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -117,6 +169,13 @@
         "站直，双手各持一只轻哑铃放在身体两侧，肘微屈。",
         "用肩膀带动手臂向两侧抬起，到与肩同高即可。",
         "慢慢放下，不要甩、不要耸肩。"
+      ],
+      "steps_en": [
+        "Stand with your feet shoulder-width apart and hold a dumbbell in each hand, palms facing your body.",
+        "Keep your back straight and engage your core.",
+        "Raise your arms out to the sides until they are parallel to the floor, keeping a slight bend in your elbows.",
+        "Pause for a moment at the top, then slowly lower your arms back down to the starting position.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -130,6 +189,14 @@
         "站直，双手各持一只哑铃，掌心向前，肘贴近身体。",
         "保持上臂不动，屈肘把哑铃举到肩前。",
         "慢下 2–3 秒回到起点，不借力。"
+      ],
+      "steps_en": [
+        "Stand up straight with a dumbbell in each hand, palms facing forward and arms fully extended.",
+        "Keeping your upper arms stationary, exhale and curl the weights while contracting your biceps.",
+        "Continue to raise the weights until your biceps are fully contracted and the dumbbells are at shoulder level.",
+        "Hold the contracted position for a brief pause as you squeeze your biceps.",
+        "Inhale and slowly begin to lower the dumbbells back to the starting position.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -143,6 +210,11 @@
         "屈髋俯身，背部平直，双手持轻哑铃自然下垂，肘微屈。",
         "用背部发力把手臂向两侧打开，肩胛收紧。",
         "慢慢合拢，不要用斜方肌耸肩。"
+      ],
+      "steps_en": [
+        "Hinge forward at the hips with a flat back, holding light dumbbells with slightly bent elbows.",
+        "Raise your arms out to the sides by squeezing your upper back and shoulder blades.",
+        "Lower them slowly; don't shrug your traps."
       ]
     },
     {
@@ -156,6 +228,12 @@
         "站直，双手持哑铃贴在大腿前，膝微屈并固定。",
         "髋向后推，哑铃贴着腿往下，背保持中立，感觉大腿后侧拉长。",
         "臀腿发力把髋推回来，站直但不要后仰。"
+      ],
+      "steps_en": [
+        "Stand with your feet shoulder-width apart, holding a dumbbell in each hand with an overhand grip.",
+        "Keeping your back straight and your core engaged, hinge at the hips and lower the dumbbells towards the ground, allowing your knees to bend slightly.",
+        "Lower the dumbbells until you feel a stretch in your hamstrings, then push through your heels and engage your glutes to return to the starting position.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -169,6 +247,14 @@
         "前后脚分开站立，重心在两脚之间。",
         "身体垂直下沉，前腿膝盖不超过脚尖太多，后膝接近地面。",
         "前脚踩实站起，做完一侧再换另一侧。"
+      ],
+      "steps_en": [
+        "Stand with your feet shoulder-width apart.",
+        "Take a step forward with one foot and place it about two feet in front of the other foot.",
+        "Lower your body by bending your knees and hips, keeping your back straight.",
+        "Continue lowering until your front thigh is parallel to the ground, and your back knee is hovering just above the ground.",
+        "Pause for a moment, then push through your front heel to return to the starting position.",
+        "Repeat for the desired number of repetitions, then switch legs and repeat."
       ]
     },
     {
@@ -182,6 +268,11 @@
         "肘撑地，肘在肩正下方，身体从头到脚踝成一条直线。",
         "收紧腹部和臀部，不要塌腰或撅屁股。",
         "保持呼吸，撑到目标时间；膝痛时改跪姿。"
+      ],
+      "steps_en": [
+        "Set your elbows under your shoulders and extend into a straight line from head to ankles.",
+        "Brace your abs and glutes; don't let your lower back sag or your hips pike up.",
+        "Keep breathing and hold for the target time; switch to a kneeling version if your knees hurt."
       ]
     },
     {
@@ -195,6 +286,12 @@
         "双手略宽于肩撑地，身体成一条直线。",
         "屈肘下放到胸口接近地面，肘约 45°。",
         "推起还原，腰不要塌。"
+      ],
+      "steps_en": [
+        "Start in a high plank position with your hands slightly wider than shoulder-width apart and your feet together.",
+        "Engage your core and lower your body towards the ground by bending your elbows, keeping your body in a straight line.",
+        "Pause for a moment when your chest is just above the ground, then push yourself back up to the starting position by straightening your arms.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -208,6 +305,13 @@
         "双手撑在桌沿或椅面上，身体成一条直线。",
         "屈肘下放，胸口接近支撑面。",
         "推起还原；支撑越高越轻松。"
+      ],
+      "steps_en": [
+        "Place your hands on an elevated surface, such as a bench or step, slightly wider than shoulder-width apart.",
+        "Extend your legs behind you, resting on the balls of your feet, creating a straight line from your head to your heels.",
+        "Lower your chest towards the elevated surface by bending your elbows, keeping your body in a straight line.",
+        "Pause for a moment at the bottom, then push yourself back up to the starting position by straightening your arms.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -221,6 +325,11 @@
         "站直，一条腿向后撤一大步。",
         "身体垂直下沉，前腿膝盖对准脚尖，后膝接近地面。",
         "前脚发力站起回到起点，换另一侧。"
+      ],
+      "steps_en": [
+        "Stand tall, then step one leg back into a long stride.",
+        "Lower straight down until your back knee is close to the floor, front knee tracking over your toes.",
+        "Push through the front foot to return to standing, then switch sides."
       ]
     },
     {
@@ -234,6 +343,11 @@
         "面对一个稳固的低台阶或台阶。",
         "一只脚踩上去，用上面的腿发力站起，不要蹬后脚。",
         "慢慢下来，换另一侧。"
+      ],
+      "steps_en": [
+        "Face a stable low step or stair.",
+        "Place one foot on it and drive through the top leg to stand up; don't push off the back foot.",
+        "Lower slowly and switch sides."
       ]
     },
     {
@@ -247,6 +361,11 @@
         "上背靠在沙发边沿，屈膝踩地，哑铃可放在髋部。",
         "臀部发力把髋顶到与身体成一条线。",
         "顶点停 1 秒再放下，不要用腰顶。"
+      ],
+      "steps_en": [
+        "Rest your upper back on the edge of a sofa with your knees bent and feet flat; a dumbbell on your hips is optional.",
+        "Squeeze your glutes to lift your hips until your body forms a straight line.",
+        "Hold one second at the top, then lower; don't arch your lower back."
       ]
     },
     {
@@ -260,6 +379,11 @@
         "背贴墙，双脚往前迈一小步，与肩同宽。",
         "沿墙下滑到屈膝约 90°（以不痛为准）。",
         "保持呼吸撑住，膝盖不超过脚尖。"
+      ],
+      "steps_en": [
+        "Stand with your back against a wall and step your feet slightly forward, hip-width apart.",
+        "Slide down the wall until your knees are bent to about 90 degrees, only as far as is pain-free.",
+        "Keep breathing and hold; keep your knees behind your toes."
       ]
     },
     {
@@ -273,6 +397,11 @@
         "四点跪姿，手在肩下、膝在髋下，背部平直。",
         "对侧手和腿同时伸直，骨盆保持水平。",
         "停 1 秒收回，换另一侧。"
+      ],
+      "steps_en": [
+        "Start on all fours with hands under shoulders and knees under hips, back flat.",
+        "Reach the opposite arm and leg out straight while keeping your pelvis level.",
+        "Hold one second, return, and switch sides."
       ]
     },
     {
@@ -286,6 +415,11 @@
         "侧卧，用肘和前臂撑地，肘在肩下。",
         "把髋抬起，身体成一条直线。",
         "撑住目标时间，换另一侧。"
+      ],
+      "steps_en": [
+        "Lie on your side with your elbow under your shoulder and your forearm on the floor.",
+        "Lift your hips until your body forms a straight line.",
+        "Hold for the target time, then switch sides."
       ]
     },
     {
@@ -299,6 +433,11 @@
         "俯卧，双臂向前伸直。",
         "同时抬起手臂和腿，胸口离地，臀腿收紧。",
         "停 1–2 秒慢慢放下，不要猛甩。"
+      ],
+      "steps_en": [
+        "Lie face down with your arms extended overhead.",
+        "Lift your arms and legs together, chest off the floor, squeezing your glutes.",
+        "Hold for 1-2 seconds, then lower slowly; don't swing."
       ]
     },
     {
@@ -312,6 +451,13 @@
         "仰卧屈膝，双手轻放耳侧或胸前。",
         "用腹部把肩胛卷离地面，腰贴地。",
         "慢慢放下，不要用手拉脖子。"
+      ],
+      "steps_en": [
+        "Lie flat on your back with your knees bent and feet flat on the ground.",
+        "Place your hands behind your head with your elbows pointing outwards.",
+        "Engage your abs and lift your shoulders off the ground, curling forward towards your knees.",
+        "Pause for a moment at the top, then slowly lower your shoulders back down to the starting position.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -325,6 +471,13 @@
         "仰卧，双腿屈膝抬起，腰贴地。",
         "用腹部把骨盆卷向胸口，臀部微微离地。",
         "慢慢放下，不要借惯性。"
+      ],
+      "steps_en": [
+        "Lie flat on your back with your arms extended along your sides.",
+        "Bend your knees and lift your feet off the ground, bringing your thighs perpendicular to the floor.",
+        "Contract your abs and curl your hips off the floor, bringing your knees towards your chest.",
+        "Pause for a moment at the top, then slowly lower your hips back down to the starting position.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -338,6 +491,13 @@
         "俯卧撑起手位，身体成一条直线。",
         "交替把膝盖往胸口收，速度按呼吸节奏。",
         "保持髋部稳定，不要上下弹。"
+      ],
+      "steps_en": [
+        "Start in a high plank position with your hands directly under your shoulders and your body in a straight line.",
+        "Engage your core and bring your right knee towards your chest, then quickly switch and bring your left knee towards your chest.",
+        "Continue alternating legs in a running motion, keeping your hips low and your core engaged.",
+        "Maintain a steady pace and breathe evenly throughout the exercise.",
+        "Repeat for the desired number of repetitions."
       ]
     },
     {
@@ -351,6 +511,11 @@
         "站直，交替把膝盖抬到髋高。",
         "前脚掌轻落地，手臂自然摆动。",
         "按时间或次数做，喘得厉害就放慢。"
+      ],
+      "steps_en": [
+        "Stand tall and alternate driving your knees up to hip height.",
+        "Land softly on the balls of your feet and swing your arms naturally.",
+        "Go by time or reps; slow down if you're gasping."
       ]
     },
     {
@@ -364,6 +529,11 @@
         "四点跪姿，手在肩下、膝在髋下。",
         "吸气塌腰抬头，呼气拱背低头。",
         "慢速来回，配合呼吸做 8–10 次。"
+      ],
+      "steps_en": [
+        "Start on all fours with hands under shoulders and knees under hips.",
+        "Inhale, drop your belly and lift your head; exhale, round your back and tuck your chin.",
+        "Move slowly with your breath for 8-10 reps."
       ]
     },
     {
@@ -377,6 +547,11 @@
         "半跪姿，后腿膝盖垫软垫。",
         "收紧臀部，把髋轻轻向前推，感觉后腿髋前侧拉长。",
         "保持 20–30 秒，换另一侧，不要塌腰。"
+      ],
+      "steps_en": [
+        "Kneel in a half-kneeling position with a pad under the back knee.",
+        "Squeeze the glute of the back leg and gently push your hips forward until you feel a stretch at the front of the hip.",
+        "Hold for 20-30 seconds, switch sides, and don't arch your lower back."
       ]
     },
     {
@@ -390,6 +565,14 @@
         "面墙站立，双手扶墙，一腿后撤、脚跟踩实。",
         "前腿屈膝，重心前移，感觉后腿小腿拉长。",
         "保持 20–30 秒，换另一侧。"
+      ],
+      "steps_en": [
+        "Stand facing a wall with your feet hip-width apart.",
+        "Place your hands against the wall at shoulder height.",
+        "Step your right foot back, keeping your heel on the ground and your leg straight.",
+        "Bend your left knee and lean forward, keeping your back leg straight and your heel on the ground.",
+        "Hold the stretch for 20-30 seconds.",
+        "Switch legs and repeat the stretch."
       ]
     }
   ]
