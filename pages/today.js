@@ -6,6 +6,7 @@ import {
   fmtDate, fmtDateTime, fmtNum, num, todayISO,
   hevyMode, hevySyncStatus, HEVY_SYNC_STALE_HOURS,
 } from '../js/data.js';
+import { repDose } from '../js/rep.js';
 
 const TYPE_LABEL = { strength: '力量', cardio: '有氧', rest: '休息' };
 
@@ -149,7 +150,7 @@ function strengthCard(plan, summary, iso) {
       checkCell,
       h('td', { class: 'muted' }, index + 1),
       h('td', {}, h('div', { class: 'name' }, ex.name), ex.cue ? h('div', { class: 'sub' }, ex.cue) : null),
-      h('td', { class: 'muted' }, repLabel(ex), h('br'), weightLabel(ex)),
+      h('td', { class: 'muted' }, repDose(ex), h('br'), weightLabel(ex)),
       h('td', { class: 'muted' }, last ? `${last.date ? fmtDate(last.date) : ''} ${lastValueText(last)}` : '—'),
       h('td', {}, last?.next_hint ? h('span', { class: 'chip lime' }, last.next_hint) : h('span', { class: 'muted' }, '—')),
     );
@@ -181,7 +182,7 @@ function strengthCard(plan, summary, iso) {
         ),
       ),
       h('div', { class: 'ex-meta' },
-        h('span', {}, repLabel(ex)),
+        h('span', {}, repDose(ex)),
         h('span', {}, weightLabel(ex)),
       ),
       h('div', { class: 'ex-meta' },
@@ -363,13 +364,6 @@ function lastValueText(last) {
   if (!Number.isFinite(weight) || weight === 0) return `自重 ×${reps}`;
   return `${fmtNum(weight)}×${reps}`;
 }
-function repLabel(ex) {
-  const core = ex.hold_s != null
-    ? `${ex.sets}×${ex.hold_s} 秒`
-    : ex.rep_min === ex.rep_max ? `${ex.sets}×${ex.rep_min}` : `${ex.sets}×${ex.rep_min}–${ex.rep_max}`;
-  return ex.per_side ? `${core}/侧` : core;
-}
-
 function weightLabel(ex) {
   if (ex.load === 'bodyweight' || ex.weight_kg == null || ex.weight_kg === 0) return '自重';
   const value = fmtNum(ex.weight_kg);

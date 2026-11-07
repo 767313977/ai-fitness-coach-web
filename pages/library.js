@@ -10,20 +10,10 @@ import {
   CATEGORIES, matchesCategory,
 } from '../js/dataset.js';
 import { collectPlanEntries, reconcileSelection } from '../js/library_state.js';
+import { planDose, repDose, repQuantity } from '../js/rep.js';
 
 const STEP_LANG_KEY = 'afc.steps.lang';
 
-/** 次数区间：上下限相同时只显示一个数，例如 3×8。 */
-function repRange(ex) {
-  if (ex?.rep_min == null) return '—';
-  return ex.rep_min === ex.rep_max ? `${ex.rep_min}` : `${ex.rep_min}–${ex.rep_max}`;
-}
-
-/** 列表里的简短写法：3×8、3×8–12 或 3×8/侧。 */
-function repBrief(ex) {
-  if (ex?.rep_min == null) return '';
-  return `${ex.sets}×${repRange(ex)}${ex.per_side ? '/侧' : ''}`;
-}
 /** 分步说明语言：zh（默认）/ en，记住上次选择 */
 let stepLang = (() => {
   try { return localStorage.getItem(STEP_LANG_KEY) === 'en' ? 'en' : 'zh'; } catch { return 'zh'; }
@@ -218,7 +208,7 @@ export function renderLibrary(ctx) {
         },
           h('div', { class: 'n' }, ex.name),
           h('div', { class: 't' }, [ex.weight_kg ? `${fmtNum(ex.weight_kg)} kg` : '自重',
-            repBrief(ex),
+            repDose(ex),
             item ? '有动作说明' : '无动作说明'].filter(Boolean).join(' · ')),
           lastText ? h('div', { class: 't' }, lastText) : null,
         );
@@ -294,7 +284,7 @@ export function renderLibrary(ctx) {
         h('h3', { style: 'margin-bottom:6px' }, ex.name),
         h('div', { class: 'chip-row', style: 'margin-top:8px' },
           h('span', { class: 'chip' }, `${ex.sets} 组`),
-          ex.rep_min != null ? h('span', { class: 'chip' }, `${repRange(ex)} 次`) : null,
+          repQuantity(ex) ? h('span', { class: 'chip' }, repQuantity(ex)) : null,
           h('span', { class: 'chip' }, ex.weight_kg ? `${fmtNum(ex.weight_kg)} kg ${ex.load === 'pair' ? '每手' : '单只'}` : '自重'),
           ex.rpe_cap != null ? h('span', { class: 'chip' }, `RPE ≤ ${ex.rpe_cap}`) : null,
         ),
@@ -348,12 +338,14 @@ export function renderLibrary(ctx) {
         item.name,
         item.zh_auto ? h('span', { class: 'tag', style: 'margin-left:8px' }, '机翻') : null),
       h('div', { class: 'chip-row', style: 'margin-top:8px' },
+        ex ? h('span', { class: 'chip' }, `${ex.sets} 组`) : null,
+        ex && repQuantity(ex) ? h('span', { class: 'chip' }, repQuantity(ex)) : null,
         h('span', { class: 'chip lime' }, item.body_part),
         h('span', { class: 'chip' }, item.equipment),
         h('span', { class: 'chip' }, `目标：${item.target}`),
       ),
       ex ? h('div', { class: 'banner info', style: 'margin-top:14px' },
-        h('div', { class: 'grow' }, `计划处方：${ex.sets} 组 × ${repRange(ex)} 次${ex.per_side ? '（每侧）' : ''}`,
+        h('div', { class: 'grow' }, `计划处方：${planDose(ex)}${ex.per_side ? '（每侧）' : ''}`,
           ex.weight_kg ? ` · ${fmtNum(ex.weight_kg)} kg ${ex.load === 'pair' ? '每手' : '单只'}` : ' · 自重',
           ex.rpe_cap != null ? ` · RPE ≤ ${ex.rpe_cap}` : '',
           ex.cue ? ` · 要点：${ex.cue}` : ''),

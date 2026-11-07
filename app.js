@@ -285,7 +285,7 @@ function topbar() {
     state.demo ? h('span', { class: 'chip' }, '演示模式') : null,
     h('div', { class: 'sync-line' },
       h('span', { class: `dot ${state.error || state.demo ? 'warn' : 'ok'}` }),
-      h('span', {}, state.data ? relTime(state.data.loadedAt) : ''),
+      h('span', {}, state.demo ? '演示数据' : state.data ? relTime(state.data.loadedAt) : ''),
     ),
     h('button', { class: 'icon-btn', title: '刷新', 'aria-label': '刷新', onClick: () => refresh() },
       state.refreshing ? h('span', { class: 'dot busy' }) : icon('refresh', 17)),
