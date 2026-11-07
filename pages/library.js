@@ -3,7 +3,7 @@
 import { h, clear, banner, lineChart } from '../js/ui.js';
 import { fmtNum, fmtDate, num } from '../js/data.js';
 import { personalRecords } from '../js/analytics.js';
-import { loadIllustrationIndex } from '../js/illustrations.js';
+import { loadIllustrationIndex, findIllustration } from '../js/illustrations.js';
 import {
   loadExercises, matchPlan, searchExercises, zhSteps,
   loadIndex, loadBodyPart, bodyPartSlug, searchFull,
@@ -246,8 +246,8 @@ export function renderLibrary(ctx) {
       if (history) right.append(history);
       const records = recordsCard(ctx.data, ex);
       if (records) right.append(records);
-      right.append(illustrationCard(ex));
     }
+    right.append(illustrationCard(ex, item));
   }
 
   (async () => {
@@ -358,19 +358,21 @@ function recordsCard(data, ex) {
 
 /**
  * 动作插图（CC BY-SA 4.0）：静态帧 + 播放按钮；减少动效时不自动播放。
- * @param {any} ex
+ * @param {any} ex 课表动作（可能没有）
+ * @param {any} item 动作库条目（可能有 id）
  */
-function illustrationCard(ex) {
+function illustrationCard(ex, item) {
   const box = h('div');
   (async () => {
     const index = await loadIllustrationIndex();
-    const entry = index?.[ex.key];
+    const entry = findIllustration(index, ex, item);
     if (!entry || !Array.isArray(entry.frames) || !entry.frames.length) return;
     const frames = entry.frames.map((p) => `./${p}`);
+    const name = ex?.name ?? item?.zh ?? item?.name ?? '动作';
     const img = h('img', {
       class: 'illustration-img',
       src: frames[0],
-      alt: `${ex.name} 动作示意`,
+      alt: `${name} 动作示意`,
       width: 160,
       height: 160,
       loading: 'lazy',
