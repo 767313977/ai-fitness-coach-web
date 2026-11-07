@@ -535,8 +535,11 @@ export async function pickBranch(cfg, defaultBranch) {
 
 export function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-/** 8 位小写十六进制 request_id，和 App 的口径一致 */
+/**
+ * 32 位小写十六进制 request_id（16 字节密码学安全随机数）。
+ * 仍然只是字符串：历史任务里的 8 位 id 继续原样查询和恢复，不重新生成。
+ */
 export function newRequestId() {
-  const bytes = crypto.getRandomValues(new Uint8Array(4));
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }

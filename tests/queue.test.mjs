@@ -246,7 +246,7 @@ test('unknown：任务保留，刷新后能按原 request_id 恢复且不重复�
   assert.equal(unsentCount(), 1);
   const task = unsentTasks()[0];
   assert.equal(task.status, 'unknown');
-  assert.match(task.requestId, /^[0-9a-f]{8}$/);
+  assert.match(task.requestId, /^[0-9a-f]{32}$/);
 
   const resumeApi = makeApi({ findRunOnce: () => completedSuccess });
   const resumed = await resumeUnfinished(resumeApi);
@@ -885,6 +885,51 @@ test('Hevy 上传：Base64 转换后锁仍有效时正常上传', async () => {
   } finally {
     restore();
   }
+});
+
+test('历史 8 位 request_id 仍能恢复和查询', async () => {
+  freshEnv();
+  const now = new Date().toISOString();
+  sessionStorage.setItem('afc.queue.v2', JSON.stringify([{
+    id: 'q-legacy',
+    kind: 'hevy-import',
+    workflow: 'import_hevy_csv.yml',
+    requestId: 'abcd1234',
+    status: 'unknown',
+    uploadPath: 'uploads/hevy/abcd1234-hevy.csv',
+    createdAt: now,
+    updatedAt: now,
+  }]));
+  const seen = [];
+  const api = makeApi({
+    findRunOnce: (id) => {
+      seen.push(id);
+      return { id: 9, status: 'completed', conclusion: 'success' };
+    },
+    findRun: () => completedSuccess,
+  });
+  const results = await resumeUnfinished(api);
+  assert.deepEqual(seen, ['abcd1234']);
+  assert.equal(results[0].result?.state, 'success');
+  assert.equal(unsentCount(), 0);
+});
+
+test('Hevy 上传路径仍是 uploads/hevy/<request_id>-<name>.csv', async () => {
+  freshEnv();
+  const csv = 'start_time,exercise_title\n2026-11-07,Squat';
+  const file = {
+    name: 'Hevy Export.csv',
+    size: csv.length,
+    type: 'text/csv',
+    slice: () => ({ text: async () => csv }),
+    arrayBuffer: async () => new TextEncoder().encode(csv).buffer,
+  };
+  let uploadedPath = '';
+  const api = makeApi({ findRun: () => completedSuccess });
+  api.putFile = async (path) => { uploadedPath = path; };
+  const queued = enqueueHevyImport(api, file, () => {});
+  await queued.promise;
+  assert.match(uploadedPath, /^uploads\/hevy\/[0-9a-f]{32}-Hevy_Export\.csv$/);
 });
 
 test('pendingSummary：终态不需要继续检查，未知类型有兜底文案', () => {

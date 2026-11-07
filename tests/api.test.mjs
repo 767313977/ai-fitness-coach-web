@@ -255,14 +255,38 @@ test('deleteFile：只允许删 uploads/ 下的文件', async () => {
   await assert.rejects(api.deleteFile('uploads/../data/diet.csv', 'x'), /uploads/);
 });
 
-test('request_id 是 8 位小写十六进制且不重复', () => {
+test('request_id 是 32 位小写十六进制且不重复', () => {
   const seen = new Set();
   for (let i = 0; i < 500; i += 1) {
     const id = newRequestId();
-    assert.match(id, /^[0-9a-f]{8}$/);
+    assert.match(id, /^[0-9a-f]{32}$/);
     seen.add(id);
   }
   assert.ok(seen.size >= 499);
+});
+
+test('request_id 使用 crypto.getRandomValues，不用 Math.random', () => {
+  const originalRandom = Math.random;
+  const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const lengths = [];
+  Math.random = () => { throw new Error('不应使用 Math.random'); };
+  Object.defineProperty(globalThis, 'crypto', {
+    value: {
+      getRandomValues(array) {
+        lengths.push(array.length);
+        array.fill(0xab);
+        return array;
+      },
+    },
+    configurable: true,
+  });
+  try {
+    assert.equal(newRequestId(), 'ab'.repeat(16));
+    assert.deepEqual(lengths, [16]);
+  } finally {
+    Math.random = originalRandom;
+    if (originalCrypto) Object.defineProperty(globalThis, 'crypto', originalCrypto);
+  }
 });
 
 test('repoMeta 返回仓库默认分支，main 仓库也能自动识别', async () => {
