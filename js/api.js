@@ -38,6 +38,12 @@ export class PublicRepoError extends ApiError {
   }
 }
 
+/** 401 统一文案：不只说「无效」，直接告诉用户下一步去哪做。 */
+function invalidTokenMessage() {
+  return 'PAT 无效或已过期：到 GitHub → Settings → Developer settings → Personal access tokens 重新生成一个'
+    + '（建议有效期 90 天内），再填进来';
+}
+
 /**
  * 403/429 的真实原因：二级限流 / 主限流 / 权限不足。
  * 只认 GitHub 自己给出的证据：错误信息里写明限流，或配额确实归零。
@@ -124,9 +130,12 @@ export function clearCache() {
   try { sessionStorage.removeItem(CACHE_KEY); } catch { /* noop */ }
 }
 
+/** 都不确定时的兜底分支：GitHub 新仓库默认是 main，master 由 pickBranch 兜底再试。 */
+const FALLBACK_BRANCH = 'main';
+
 /**
- * 选择目标分支：用户填了就用填的，否则用仓库默认分支，最后兜底 master。
- * 不写死 master，main 仓库同样能用。
+ * 选择目标分支：用户填了就用填的，否则用仓库默认分支，最后兜底 main。
+ * 不写死 master，main / master 两种默认分支的仓库都能用。
  * @param {string|undefined} savedBranch
  * @param {string|undefined} defaultBranch
  * @returns {string}
@@ -135,13 +144,13 @@ export function resolveBranch(savedBranch, defaultBranch) {
   const own = String(savedBranch ?? '').trim();
   if (own) return own;
   const fallback = String(defaultBranch ?? '').trim();
-  return fallback || 'master';
+  return fallback || FALLBACK_BRANCH;
 }
 
 export class GitHubApi {
   /** @param {ApiConfig} cfg */
   constructor(cfg) {
-    this.cfg = { ...cfg, ref: cfg.ref || 'master' };
+    this.cfg = { ...cfg, ref: cfg.ref || FALLBACK_BRANCH };
     /** 最近一次因网络失败而回落到缓存的时间；loadAll 用它提示「离线」 */
     this.lastOffline = null;
     ensureLoaded();
@@ -188,11 +197,11 @@ export class GitHubApi {
 
     if (res.status === 304 && cached) return cached.text;
     if (res.status === 404) {
-      throw new NotFoundError(`仓库里找不到 ${path}（核对一下 owner/repo 和分支）`);
+      throw new NotFoundError(`仓库里找不到 ${path}：核对账号名、仓库名和分支（当前分支 ${this.cfg.ref}）`);
     }
-    if (res.status === 401) throw new ApiError('PAT 无效或已过期，重新填一个', 401);
+    if (res.status === 401) throw new ApiError(invalidTokenMessage(), 401);
     if (res.status === 403 || res.status === 429) {
-      throw await forbiddenError(res, 'PAT 没有这个仓库的读取权限');
+      throw await forbiddenError(res, 'PAT 没有这个仓库的读取权限：把 Contents 设为 Read（导入 Hevy 要 Read and write），并确认 PAT 已选中这个仓库');
     }
     if (!res.ok) throw new ApiError(`GitHub 返回 ${res.status}`, res.status);
 
@@ -225,21 +234,27 @@ export class GitHubApi {
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
-    if (res.status === 401) throw new ApiError('PAT 无效或已过期，重新填一个', 401);
+    if (res.status === 401) throw new ApiError(invalidTokenMessage(), 401);
     if (res.status === 404) {
-      throw new ApiError('仓库不存在，或 PAT 没有这个私有仓库的访问权限（fine-grained PAT 要选中该仓库）', 404);
+      throw new ApiError(
+        '找不到这个仓库：先核对 Github 账号和仓库名有没有打错；如果没错，说明 PAT 没有这个私有仓库的访问权限'
+        + '（fine-grained PAT 要在 Repository access 里勾选它）',
+        404,
+      );
     }
-    if (res.status === 403 || res.status === 429) throw await forbiddenError(res, 'PAT 没有读取仓库信息的权限');
+    if (res.status === 403 || res.status === 429) {
+      throw await forbiddenError(res, 'PAT 没有读取仓库信息的权限：把 Contents 设为 Read（导入 Hevy 要 Read and write），并确认 PAT 已选中这个仓库');
+    }
     if (!res.ok) throw new ApiError(`读取仓库信息失败：GitHub 返回 ${res.status}`, res.status);
     const data = await res.json();
     return {
       private: data?.private === true,
       fullName: typeof data?.full_name === 'string' ? data.full_name : `${this.cfg.owner}/${this.cfg.repo}`,
       canPush: data?.permissions?.push !== false,
-      /** 仓库默认分支：用户没填分支时用它，避免写死 master */
+      /** 仓库默认分支：优先用 GitHub 返回的 default_branch，缺失时才兜底 */
       defaultBranch: typeof data?.default_branch === 'string' && data.default_branch
         ? data.default_branch
-        : 'master',
+        : FALLBACK_BRANCH,
     };
   }
 
@@ -287,9 +302,11 @@ export class GitHubApi {
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
-    if (res.status === 401) throw new ApiError('PAT 无效或已过期，重新填一个', 401);
-    if (res.status === 404) throw new ApiError('PAT 没有这个仓库的访问权限', 404);
-    if (res.status === 403 || res.status === 429) throw await forbiddenError(res, 'PAT 缺少 Actions 读取权限');
+    if (res.status === 401) throw new ApiError(invalidTokenMessage(), 401);
+    if (res.status === 404) throw new ApiError('找不到仓库或工作流：核对账号名、仓库名，以及 PAT 是否选中了这个仓库', 404);
+    if (res.status === 403 || res.status === 429) {
+      throw await forbiddenError(res, 'PAT 缺少 Actions 读取权限：在 PAT 里把 Actions 设为 Read and write');
+    }
     if (!res.ok) throw new ApiError(`Actions 接口返回 ${res.status}`, res.status);
     const data = await res.json();
     return (data?.total_count ?? 0);
@@ -318,9 +335,13 @@ export class GitHubApi {
       throw new ApiError('网络不通，提交没有发出去', 0);
     }
     if (res.status === 204) return;
-    if (res.status === 401) throw new ApiError('PAT 无效或已过期', 401);
-    if (res.status === 404) throw new ApiError('工作流不存在，或 PAT 没有 Actions 权限', 404);
-    if (res.status === 403 || res.status === 429) throw await forbiddenError(res, 'PAT 缺少 Actions: write 权限');
+    if (res.status === 401) throw new ApiError(invalidTokenMessage(), 401);
+    if (res.status === 404) {
+      throw new ApiError('工作流不存在，或 PAT 没有 Actions 权限：确认工作流文件还在，且 Actions 权限为 Read and write', 404);
+    }
+    if (res.status === 403 || res.status === 429) {
+      throw await forbiddenError(res, 'PAT 缺少 Actions: write 权限：在 PAT 里把 Actions 设为 Read and write 后再提交');
+    }
     if (res.status === 422) throw new ApiError('提交参数被 GitHub 拒绝了（检查工作流 inputs）', 422);
     throw new ApiError(`派发失败：GitHub 返回 ${res.status}`, res.status);
   }
@@ -368,7 +389,9 @@ export class GitHubApi {
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
-    if (res.status === 403 || res.status === 429) throw await forbiddenError(res, 'PAT 没有读取权限');
+    if (res.status === 403 || res.status === 429) {
+      throw await forbiddenError(res, 'PAT 没有读取 Actions 运行记录的权限：在 PAT 里把 Actions 设为 Read and write');
+    }
     if (!res.ok) throw new ApiError(`GitHub 返回 ${res.status}`, res.status);
     return res.json();
   }
@@ -400,11 +423,46 @@ export class GitHubApi {
       body: JSON.stringify(body),
     });
     if (res.status === 403 || res.status === 429) {
-      throw await forbiddenError(res, 'PAT 缺少 Contents 写权限（导入 Hevy 需要）');
+      throw await forbiddenError(res, 'PAT 缺少 Contents 写权限：导入 Hevy 需要把 Contents 设为 Read and write');
     }
     if (!res.ok) throw new ApiError(`上传失败：GitHub 返回 ${res.status}`, res.status);
     return res.json();
   }
+}
+
+/**
+ * 逐个探测可用分支：用户指定 → 仓库默认 → main → master。
+ * 只有 config.json 真的能读到，才算这个分支可用；404 就换下一个。
+ * 401/403/断网换分支也没用，直接抛出，避免把账号问题误判成分支问题。
+ * @param {ApiConfig} cfg 其中的 ref 视为用户指定的分支
+ * @param {string|undefined} defaultBranch
+ * @returns {Promise<{branch: string, api: GitHubApi}>}
+ */
+export async function pickBranch(cfg, defaultBranch) {
+  /** @type {string[]} */
+  const candidates = [];
+  const add = (value) => {
+    const branch = String(value ?? '').trim();
+    if (branch && !candidates.includes(branch)) candidates.push(branch);
+  };
+  add(cfg.ref);
+  add(defaultBranch);
+  add('main');
+  add('master');
+
+  /** @type {any} */
+  let lastError = null;
+  for (const branch of candidates) {
+    const api = new GitHubApi({ ...cfg, ref: branch });
+    try {
+      await api.json('config.json', { fresh: true });
+      return { branch, api };
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError ?? new ApiError('仓库里没有可用的分支（试过 main / master）', 404);
 }
 
 export function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }

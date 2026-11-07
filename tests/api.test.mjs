@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ApiError, GitHubApi, PublicRepoError, newRequestId, resolveBranch } from '../js/api.js';
+import { ApiError, GitHubApi, PublicRepoError, newRequestId, pickBranch, resolveBranch } from '../js/api.js';
 
 /** @param {any} body @param {number} [status] */
 function json(body, status = 200) {
@@ -209,11 +209,62 @@ test('repoMeta 返回仓库默认分支，main 仓库也能自动识别', async 
   assert.equal(meta.defaultBranch, 'main');
 });
 
-test('resolveBranch：填了用填的，没填用默认分支，最后兜底 master', () => {
+test('resolveBranch：填了用填的，没填用默认分支，最后兜底 main', () => {
   assert.equal(resolveBranch('', 'main'), 'main');
   assert.equal(resolveBranch('  dev  ', 'main'), 'dev');
-  assert.equal(resolveBranch(undefined, ''), 'master');
-  assert.equal(resolveBranch(null, undefined), 'master');
+  assert.equal(resolveBranch(undefined, 'master'), 'master');
+  assert.equal(resolveBranch(undefined, ''), 'main');
+  assert.equal(resolveBranch(null, undefined), 'main');
+});
+
+test('pickBranch：用户填的分支没有 config 时回退到仓库默认分支', async () => {
+  const seen = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    seen.push(u);
+    if (u.includes('ref=typo')) return json({ message: 'Not Found' }, 404);
+    if (u.includes('ref=main')) return raw('{"athlete":{"weight_kg":70}}');
+    throw new Error(`不应访问：${u}`);
+  };
+  const picked = await pickBranch({ owner: 'owner', repo: 'fallback-default', token: 'dummy', ref: 'typo' }, 'main');
+  assert.equal(picked.branch, 'main');
+  assert.equal(picked.api.cfg.ref, 'main');
+  assert.equal(seen.length, 2);
+  assert.ok(seen.every((u) => u.includes('/contents/config.json')));
+});
+
+test('pickBranch：没有默认分支信息时先试 main 再试 master', async () => {
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('ref=main')) return json({ message: 'Not Found' }, 404);
+    if (u.includes('ref=master')) return raw('{}');
+    throw new Error(`不应访问：${u}`);
+  };
+  const picked = await pickBranch({ owner: 'owner', repo: 'legacy-master', token: 'dummy', ref: '' }, undefined);
+  assert.equal(picked.branch, 'master');
+});
+
+test('pickBranch：账号错误不换分支重试', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return json({ message: 'Bad credentials' }, 401);
+  };
+  await assert.rejects(
+    pickBranch({ owner: 'owner', repo: 'bad-pat', token: 'dummy', ref: 'main' }, 'main'),
+    (error) => error instanceof ApiError && error.status === 401,
+  );
+  assert.equal(calls, 1);
+});
+
+test('pickBranch：所有候选分支都没有 config 时报分支错误', async () => {
+  globalThis.fetch = async () => json({ message: 'Not Found' }, 404);
+  await assert.rejects(
+    pickBranch({ owner: 'owner', repo: 'no-config', token: 'dummy', ref: '' }, undefined),
+    (error) => error instanceof ApiError
+      && error.status === 404
+      && /config\.json/.test(error.message),
+  );
 });
 
 test('urlFor 使用传入的分支，不写死 master', () => {

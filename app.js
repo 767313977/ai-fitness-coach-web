@@ -1,6 +1,6 @@
 // @ts-check
 /** 应用外壳：登录、路由、数据加载、侧边栏。 */
-import { ApiError, GitHubApi, PublicRepoError, clearCache, resolveBranch, setCachePersistence } from './js/api.js';
+import { ApiError, GitHubApi, PublicRepoError, clearCache, pickBranch, resolveBranch, setCachePersistence } from './js/api.js';
 import { loadAll, todayISO, fmtDate } from './js/data.js';
 import { h, clear, icon, toast, banner } from './js/ui.js';
 import { DEMO_DATA } from './js/demo.js';
@@ -101,8 +101,8 @@ async function connect(opts = {}) {
       state.data = DEMO_DATA;
     } else {
       const auth = /** @type {Auth} */ (state.auth);
-      // 老版本保存的 auth 没有 branch：先按 master 探测，再用仓库的默认分支纠正。
-      const probe = new GitHubApi({ ...auth, ref: auth.branch || 'master' });
+      // repoMeta 与分支无关：先确认是不是私有仓库，再探测分支
+      const probe = new GitHubApi({ ...auth, ref: resolveBranch(auth.branch) });
       let meta = null;
       try {
         meta = await probe.repoMeta();
@@ -111,9 +111,18 @@ async function connect(opts = {}) {
         meta = null;
       }
       if (meta && meta.private !== true) throw new PublicRepoError();
-      const branch = resolveBranch(auth.branch, meta?.defaultBranch);
-      state.auth = { ...auth, branch };
-      state.api = branch === probe.cfg.ref ? probe : new GitHubApi({ ...state.auth });
+      /** @type {{branch: string, api: GitHubApi}} */
+      let picked;
+      try {
+        picked = await pickBranch(auth, meta?.defaultBranch);
+      } catch (error) {
+        // 连不上时不要卡在分支探测上：沿用已保存分支，交给 loadAll 用缓存兜底
+        if (!(error instanceof ApiError) || error.status !== 0) throw error;
+        const branch = resolveBranch(auth.branch, meta?.defaultBranch);
+        picked = { branch, api: new GitHubApi({ ...auth, ref: branch }) };
+      }
+      state.auth = { ...auth, branch: picked.branch };
+      state.api = picked.api;
       state.data = await loadAll(state.api, { fresh: Boolean(opts.fresh) });
     }
   } catch (error) {
@@ -368,22 +377,21 @@ function loginView() {
     connectBtn.disabled = true;
     connectBtn.textContent = '验证仓库…';
     try {
-      const probe = new GitHubApi({ ...auth, ref: auth.branch || 'master' });
+      const probe = new GitHubApi({ ...auth, ref: resolveBranch(auth.branch) });
       // 必须确认是私有仓库，否则不保存 PAT（健康数据不能进公开仓库）
       const meta = await probe.repoMeta();
-      if (!meta.private) throw new Error('这个仓库不是私有仓库');
-      // 用户没填分支就用仓库默认分支；填了就用填的，随后 verifyRepo 会验证分支下确有数据
-      const resolved = resolveBranch(auth.branch, meta.defaultBranch);
-      const api = resolved === probe.cfg.ref ? probe : new GitHubApi({ ...auth, ref: resolved });
-      await api.verifyRepo();
-      state.auth = { ...auth, branch: resolved };
+      if (!meta.private) throw new PublicRepoError();
+      // 用户填的分支 → 仓库默认分支 → main → master，谁先能读到 config.json 就用谁
+      const picked = await pickBranch(auth, meta.defaultBranch);
+      await picked.api.verifyRepo();
+      state.auth = { ...auth, branch: picked.branch };
       state.demo = false;
       sessionStorage.removeItem(DEMO_KEY);
       saveAuth(state.auth);
       setCachePersistence(auth.remember);
       await connect();
       navigate('/today');
-      toast(`已验证私有仓库并连接成功（分支 ${resolved}）`);
+      toast(`已验证私有仓库并连接成功（分支 ${picked.branch}）`);
     } catch (error) {
       clear(errorBox);
       errorBox.append(banner(errorText(error), 'err'));
