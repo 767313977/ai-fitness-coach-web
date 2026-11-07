@@ -82,7 +82,9 @@ export function renderLibrary(ctx) {
     try {
       fullIndex = await loadIndex();
     } catch (error) {
-      fullError = error?.message ?? String(error);
+      fullError = navigator.onLine === false
+        ? '完整动作库需要联网，离线时不可用（课表的 13 个动作插图和说明仍可查看）'
+        : error?.message ?? String(error);
       fullMode = false;
       toggle.checked = false;
       sessionStorage.setItem('afc.library.full', '0');

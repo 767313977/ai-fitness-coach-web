@@ -1,11 +1,11 @@
-﻿// @ts-check
+// @ts-check
 /** 记录：打卡 / 饮食 / 有氧 / 身体指标 / 导入 Hevy / 生成周复盘 / 采纳提案。
  *
  * 所有提交都进全局串行队列（js/queue.js）：一次只发一个，避免 GitHub 并发组把排队任务顶掉。
  */
 import { h, banner, clear, toast, icon } from '../js/ui.js';
 import { todayISO } from '../js/data.js';
-import { importHevy, describeRun } from '../js/submit.js';
+import { importHevy, syncHevyApi, describeRun } from '../js/submit.js';
 import { enqueue } from '../js/queue.js';
 
 /** @param {any} ctx @param {string[]} rest */
@@ -291,6 +291,37 @@ function importPage(ctx) {
     fileInput,
     status,
     btn,
+  ));
+
+  const syncStatus = h('div', { class: 'hint', style: 'min-height:20px' });
+  const syncBtn = h('button', { class: 'btn block', style: 'margin-top:8px' }, '从 Hevy 同步最近 14 天');
+  syncBtn.addEventListener('click', async () => {
+    if (ctx.state.demo) { toast('演示模式不会提交'); return; }
+    syncBtn.disabled = true;
+    try {
+      const { position, promise } = syncHevyApi(ctx.api, 14, (s) => { syncStatus.textContent = s; });
+      if (position > 0) syncStatus.textContent = `排队中（前面还有 ${position} 条）`;
+      const result = await promise;
+      syncStatus.textContent = result.state === 'failure'
+        ? '失败：未配置 HEVY_API_KEY，或 Hevy PRO 已过期'
+        : `结果：${describeRun(result)}`;
+      if (result.state === 'success') {
+        toast('已从 Hevy 同步');
+        setTimeout(() => ctx.refresh(), 600);
+      }
+    } catch (error) {
+      syncStatus.textContent = `失败：${error?.message ?? error}`;
+    } finally {
+      syncBtn.disabled = false;
+    }
+  });
+
+  wrap.append(h('div', { class: 'card', style: 'margin-top:14px' },
+    h('div', { class: 'card-title' }, '从 Hevy API 同步'),
+    h('div', { class: 'hint', style: 'margin-bottom:12px' },
+      '需要仓库 Secrets 里配置 HEVY_API_KEY（Hevy PRO 账号）。同步最近 14 天，在 Hevy 里删掉的训练也会一起反映；Key 只存在于 Actions，不经过浏览器。'),
+    syncStatus,
+    syncBtn,
   ));
   return wrap;
 }

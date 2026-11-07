@@ -4,7 +4,7 @@ import { ApiError, GitHubApi, clearCache, setCachePersistence } from './js/api.j
 import { loadAll, todayISO, fmtDate } from './js/data.js';
 import { h, clear, icon, toast, banner } from './js/ui.js';
 import { DEMO_DATA } from './js/demo.js';
-import { hasPending } from './js/queue.js';
+import { hasPending, resendUnsent, unsentCount } from './js/queue.js';
 import { renderToday } from './pages/today.js';
 import { renderWeek } from './pages/week.js';
 import { renderReviewList, renderReviewDetail } from './pages/review.js';
@@ -146,6 +146,18 @@ function render() {
   } else if (state.error && !state.data) {
     content.append(renderError(state.error));
   } else {
+    const unsent = unsentCount();
+    if (unsent > 0) {
+      content.append(h('div', { class: 'card' },
+        banner(`上次有 ${unsent} 条没发出去（刷新或关页面时队列还没跑完）。`, 'warn'),
+        h('button', { class: 'btn small', onClick: async () => {
+          const results = await resendUnsent(state.api);
+          const failed = results.filter((item) => item.error || item.result?.state !== 'success');
+          toast(failed.length ? `重发完成，${failed.length} 条仍需重试` : '已重新发出');
+          refresh();
+        } }, '重发'),
+      ));
+    }
     content.append(pageView());
   }
 
@@ -278,15 +290,28 @@ function loginView() {
   const owner = h('input', { id: 'owner', class: 'input', placeholder: '你的 GitHub 用户名', value: saved?.owner ?? '' });
   const repo = h('input', { id: 'repo', class: 'input', placeholder: 'ai-fitness-coach', value: saved?.repo ?? 'ai-fitness-coach' });
   const token = h('input', { id: 'token', class: 'input', type: 'password', placeholder: 'github_pat_… 或 ghp_…', autocomplete: 'off' });
-  const remember = h('input', { type: 'checkbox', id: 'remember' });
+  // 默认不勾：同域名下的其他 GitHub Pages 也能读到 localStorage 里的 PAT
+  const remember = h('input', { type: 'checkbox', id: 'remember', checked: false });
   const errorBox = h('div');
 
   const connectBtn = h('button', { class: 'btn primary block', onClick: async () => {
+    let rememberValue = remember.checked;
+    if (rememberValue) {
+      const okay = confirm(
+        '「记住我」会把有写权限的 PAT 存进 localStorage。'
+        + '浏览器按域名隔离存储，同域名下的其他 GitHub Pages（例如 767313977.github.io/zhifujing/）'
+        + '也能读到它。确定要记住吗？',
+      );
+      if (!okay) {
+        remember.checked = false;
+        rememberValue = false;
+      }
+    }
     const auth = {
       owner: owner.value.trim(),
       repo: repo.value.trim() || 'ai-fitness-coach',
       token: token.value.trim(),
-      remember: remember.checked,
+      remember: rememberValue,
     };
     if (!auth.owner || !auth.token) {
       clear(errorBox);
@@ -325,6 +350,7 @@ function loginView() {
         h('div', { class: 'field' },
           h('label', { for: 'token' }, 'Fine-grained PAT'), token,
           h('div', { class: 'hint' }, '权限：Contents 读写（导入 Hevy 要用）+ Actions 读写；范围只授权这一个仓库。'),
+          h('div', { class: 'hint' }, '建议把 PAT 的过期时间设在 90 天以内。'),
         ),
         h('label', { class: 'row', style: 'border:0;padding:0 0 12px' },
           remember, h('span', {}, '在这台设备记住我（不勾选时，PAT 和数据缓存都只在本次会话有效）')),

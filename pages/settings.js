@@ -85,6 +85,16 @@ export function renderSettings(ctx) {
   ));
 
   right.append(h('section', { class: 'card' },
+    h('div', { class: 'card-title' }, 'PAT 与同域名风险'),
+    h('div', { class: 'hint' },
+      'localStorage 按域名隔离，不按路径。本站和同一账号下的其他 GitHub Pages（例如 /zhifujing/）同域，'
+      + '勾选「记住我」后，那边的任何脚本也能读到这个有写权限的 PAT。登录页默认不勾。',
+      h('br'),
+      '根本解决二选一：(a) 给 Web 版配独立域名或子域名；(b) 把 zhifujing 的 Pages 迁到别处。'
+      + '在定下来之前，建议不要勾「记住我」，每次开新标签页重新填 PAT。'),
+  ));
+
+  right.append(h('section', { class: 'card' },
     h('div', { class: 'card-title' }, '演示模式'),
     h('div', { class: 'hint', style: 'margin-bottom:10px' }, '用假数据看看界面，不会连接 GitHub。'),
     h('button', { class: 'btn block', onClick: () => {
