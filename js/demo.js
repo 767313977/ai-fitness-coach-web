@@ -93,6 +93,7 @@ export const DEMO_DATA = {
     },
     timezone: 'Asia/Shanghai',
     knee_pain_baseline: 0,
+    hevy_mode: 'api',
   },
   summary: {
     generated_at: new Date().toISOString(),
@@ -236,5 +237,12 @@ export const DEMO_DATA = {
     return rows;
   })(),
   body: [],
+  // 演示用：假装两小时前同步过一次（与上面演示训练条数对得上）
+  syncState: {
+    last_event_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    last_run_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    workouts_seen: 3,
+    rows_written: 21,
+  },
   loadedAt: new Date().toISOString(),
 };

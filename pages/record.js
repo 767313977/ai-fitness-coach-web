@@ -1,11 +1,11 @@
-// @ts-check
+﻿// @ts-check
 /** 记录：打卡 / 饮食 / 有氧 / 身体指标 / 导入 Hevy / 生成周复盘 / 采纳提案。
  *
  * 所有提交都进全局串行队列（js/queue.js）：一次只发一个，避免 GitHub 并发组把排队任务顶掉。
  */
 import { h, banner, clear, toast, icon } from '../js/ui.js';
-import { todayISO } from '../js/data.js';
-import { importHevy, syncHevyApi, describeRun } from '../js/submit.js';
+import { todayISO, hevyMode, hevySyncStatus, fmtDateTime, HEVY_SYNC_STALE_HOURS } from '../js/data.js';
+import { importHevy, syncHevy, describeRun } from '../js/submit.js';
 import { enqueue } from '../js/queue.js';
 
 /** @param {any} ctx @param {string[]} rest */
@@ -48,7 +48,9 @@ function hub(ctx) {
         h('div', { class: 'idx' }, icon(item.icon, 15)),
         h('div', { class: 'grow' },
           h('div', { class: 'name' }, item.title),
-          h('div', { class: 'sub' }, item.desc),
+          h('div', { class: 'sub' }, item.key === 'import' && hevyMode(ctx.data?.config) === 'api'
+            ? '云端每天 22:43 自动同步'
+            : item.desc),
         ),
       ),
     ));
@@ -259,6 +261,13 @@ function importPage(ctx) {
   const wrap = h('div');
   wrap.append(back(ctx, '/record', '记录'));
   wrap.append(h('h2', { style: 'margin:6px 0 12px' }, '导入 Hevy'));
+  wrap.append(hevyMode(ctx.data?.config) === 'api' ? apiSyncCard(ctx) : csvImportCard(ctx));
+  return wrap;
+}
+
+/** CSV 模式：上传 Hevy 导出的文件，派发导入工作流 */
+function csvImportCard(ctx) {
+  const card = h('div');
   const fileInput = h('input', { class: 'input', type: 'file', accept: '.csv,text/csv' });
   const status = h('div', { class: 'hint', style: 'min-height:20px' });
   const btn = h('button', { class: 'btn primary block' }, '上传并导入');
@@ -284,7 +293,7 @@ function importPage(ctx) {
     }
   });
 
-  wrap.append(h('div', { class: 'card' },
+  card.append(h('div', { class: 'card' },
     h('div', { class: 'card-title' }, 'Hevy → 导出 CSV'),
     h('div', { class: 'hint', style: 'margin-bottom:12px' },
       'Hevy → Profile → Settings → Export & Import Data → Export Workouts。上传需要 PAT 有 Contents 读写权限；Actions 导入后会删除临时文件。'),
@@ -292,38 +301,80 @@ function importPage(ctx) {
     status,
     btn,
   ));
+  return card;
+}
 
-  const syncStatus = h('div', { class: 'hint', style: 'min-height:20px' });
-  const syncBtn = h('button', { class: 'btn block', style: 'margin-top:8px' }, '从 Hevy 同步最近 14 天');
-  syncBtn.addEventListener('click', async () => {
+/** API 模式：密钥在 Actions 里，网页只展示同步状态、按需手动补一次 */
+function apiSyncCard(ctx) {
+  const info = hevySyncStatus(ctx.data?.syncState);
+  const state = ctx.data?.syncState ?? {};
+
+  const chip = info.unknown
+    ? h('span', { class: 'chip red' }, '还没同步过')
+    : h('span', { class: `chip ${info.stale ? 'red' : 'lime'}` }, info.stale ? '同步超时' : '正常');
+
+  const status = h('div', { class: 'hint', style: 'min-height:20px' });
+  const btn = h('button', { class: 'btn primary block' }, '立即同步');
+
+  btn.addEventListener('click', async () => {
     if (ctx.state.demo) { toast('演示模式不会提交'); return; }
-    syncBtn.disabled = true;
+    btn.disabled = true;
     try {
-      const { position, promise } = syncHevyApi(ctx.api, 14, (s) => { syncStatus.textContent = s; });
-      if (position > 0) syncStatus.textContent = `排队中（前面还有 ${position} 条）`;
+      const { position, promise } = syncHevy(ctx.api, (s) => { status.textContent = s; });
+      if (position > 0) status.textContent = `排队中（前面还有 ${position} 条）`;
       const result = await promise;
-      syncStatus.textContent = result.state === 'failure'
-        ? '失败：未配置 HEVY_API_KEY，或 Hevy PRO 已过期'
-        : `结果：${describeRun(result)}`;
+      status.textContent = `结果：${describeRun(result)}`;
       if (result.state === 'success') {
-        toast('已从 Hevy 同步');
+        toast('同步完成');
         setTimeout(() => ctx.refresh(), 600);
       }
     } catch (error) {
-      syncStatus.textContent = `失败：${error?.message ?? error}`;
+      status.textContent = `失败：${error?.message ?? error}`;
     } finally {
-      syncBtn.disabled = false;
+      btn.disabled = false;
     }
   });
 
-  wrap.append(h('div', { class: 'card', style: 'margin-top:14px' },
-    h('div', { class: 'card-title' }, '从 Hevy API 同步'),
-    h('div', { class: 'hint', style: 'margin-bottom:12px' },
-      '需要仓库 Secrets 里配置 HEVY_API_KEY（Hevy PRO 账号）。同步最近 14 天，在 Hevy 里删掉的训练也会一起反映；Key 只存在于 Actions，不经过浏览器。'),
-    syncStatus,
-    syncBtn,
-  ));
-  return wrap;
+  return h('div', { class: 'card' },
+    h('div', { class: 'card-head' },
+      h('div', { class: 'grow' },
+        h('div', { class: 'card-title', style: 'margin:0' }, 'Hevy 云端自动同步'),
+        h('div', { class: 'sub' }, '每天 22:43 拉一次，App 和网页共用这份数据'),
+      ),
+      chip,
+    ),
+    h('div', { class: 'row' },
+      h('div', { class: 'grow' }, h('div', { class: 'name' }, '上次同步')),
+      h('div', { class: 'val' }, info.at ? `${fmtDateTime(info.at)} · ${agoText(info.hours)}` : '无记录'),
+    ),
+    h('div', { class: 'row' },
+      h('div', { class: 'grow' }, h('div', { class: 'name' }, '已同步训练')),
+      h('div', { class: 'val' }, `${Number(state.workouts_seen ?? 0)} 次`),
+    ),
+    h('div', { class: 'row' },
+      h('div', { class: 'grow' }, h('div', { class: 'name' }, '写入组数')),
+      h('div', { class: 'val' }, `${Number(state.rows_written ?? 0)} 组`),
+    ),
+    info.stale
+      ? h('div', { style: 'margin-top:12px' }, banner(
+        info.unknown
+          ? '还没有同步记录。先去 Actions 手动运行一次「Hevy 自动同步」，或点下面的按钮。'
+          : `超过 ${HEVY_SYNC_STALE_HOURS} 小时没同步，去 Actions 看「Hevy 自动同步」是不是失败了。`,
+        'warn',
+      ))
+      : null,
+    h('div', { class: 'hint', style: 'margin:12px 0' },
+      '同步只替换带 workout_id 的行，手动补录（source=manual）不会被改动；Hevy 的 api-key 只存在 Actions Secret 里，不会进浏览器。'),
+    btn,
+    status,
+  );
+}
+
+function agoText(hours) {
+  if (hours === null || hours === undefined) return '';
+  if (hours < 1) return '刚刚';
+  if (hours < 24) return `${Math.round(hours)} 小时前`;
+  return `${Math.round(hours / 24)} 天前`;
 }
 
 function weeklyPage(ctx) {

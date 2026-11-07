@@ -55,6 +55,7 @@ export async function loadAll(api, opts = {}) {
     diet: 'data/diet.csv',
     checkin: 'data/checkin.csv',
     body: 'data/body.csv',
+    syncState: 'data/sync_state.json',
   };
   const entries = await Promise.all(
     Object.entries(files).map(async ([key, path]) => {
@@ -80,8 +81,48 @@ export async function loadAll(api, opts = {}) {
     diet: parseCSV(raw.diet),
     checkin: parseCSV(raw.checkin),
     body: parseCSV(raw.body),
+    syncState: parseJSON(raw.syncState),
     loadedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Hevy 导入模式：`csv` 手动上传，`api` 云端自动同步。缺省按 csv 处理。
+ * @param {any} config
+ * @returns {'csv'|'api'}
+ */
+export function hevyMode(config) {
+  return String(config?.hevy_mode ?? '').trim().toLowerCase() === 'api' ? 'api' : 'csv';
+}
+
+/** 定时任务每天 22:43 跑一次；超过这个小时数还没同步就算超时。 */
+export const HEVY_SYNC_STALE_HOURS = 26;
+
+/**
+ * 解析 sync_state.json，判断上次同步是否超时。
+ * @param {any} syncState
+ * @param {number} [now] 毫秒时间戳（测试用）
+ * @returns {{at: string|null, hours: number|null, stale: boolean, unknown: boolean}}
+ */
+export function hevySyncStatus(syncState, now = Date.now()) {
+  const raw = syncState?.last_run_at || syncState?.last_event_at || '';
+  const at = raw ? Date.parse(raw) : NaN;
+  if (!Number.isFinite(at)) return { at: null, hours: null, stale: true, unknown: true };
+  const hours = (now - at) / 3_600_000;
+  return { at: new Date(at).toISOString(), hours, stale: hours > HEVY_SYNC_STALE_HOURS, unknown: false };
+}
+
+/** 北京时间「11月7日 12:44」 @param {string} iso */
+export function fmtDateTime(iso) {
+  if (!iso) return '';
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(at));
+  const get = (type) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${Number(get('month'))}月${Number(get('day'))}日 ${get('hour')}:${get('minute')}`;
 }
 
 /** @param {string|null} text */

@@ -81,34 +81,17 @@ export function importHevy(api, file, onStatus, onStart) {
 }
 
 /**
- * 从 Hevy API 同步最近 N 天（Key 只在仓库 Secrets，浏览器不接触）。
- * 与 CSV 导入共用一个队列，避免并发写入。
+ * API 模式下手动触发一次云端同步。
+ * Hevy 的 api-key 存在 Actions Secret 里，浏览器只负责派发工作流，不碰密钥。
  * @param {import('./api.js').GitHubApi} api
- * @param {number} days
  * @param {(s: string) => void} onStatus
  * @param {() => void} [onStart]
  */
-export function syncHevyApi(api, days, onStatus, onStart) {
-  const id = newRequestId();
+export function syncHevy(api, onStatus, onStart) {
   const { position, promise } = enqueueJob(async () => {
     onStart?.();
     onStatus(position ? `排队中（前面还有 ${position} 条）` : '派发同步');
-    let result = await runWorkflow(api, {
-      workflow: 'sync_hevy_api.yml',
-      inputs: { days: String(days || 14) },
-      requestId: id,
-      onStatus,
-    });
-    if (result.state === 'cancelled') {
-      onStatus('被排队取消，用同一个 request_id 重试一次…');
-      result = await runWorkflow(api, {
-        workflow: 'sync_hevy_api.yml',
-        inputs: { days: String(days || 14) },
-        requestId: id,
-        onStatus,
-      });
-    }
-    return result;
+    return runWorkflow(api, { workflow: 'hevy_sync.yml', inputs: {}, onStatus });
   });
   return { position, promise };
 }
