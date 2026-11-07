@@ -43,3 +43,9 @@ test('离线回退只查本项目缓存，不跨项目 match', () => {
   assert.ok(!/caches\.match\(event\.request\)/.test(sw));
   assert.match(sw, /cache: 'no-cache'/);
 });
+
+test('运行时只缓存外壳与插图，完整动作库不进缓存', () => {
+  assert.match(sw, /isCacheable\(url\)/);
+  assert.match(sw, /response\.ok && isCacheable\(url\)/);
+  assert.ok(!/data\/exercises-full/.test(sw));
+});

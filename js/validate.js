@@ -42,9 +42,11 @@ export function validateField(rule, raw, label, today = todayISO()) {
   if (value === '') return null;
 
   if (rule.kind === 'date') {
-    if (!ISO_DATE.test(value) || !Number.isFinite(Date.parse(`${value}T00:00:00Z`))) {
-      return `${label} 格式不对，应为 YYYY-MM-DD`;
-    }
+    if (!ISO_DATE.test(value)) return `${label} 格式不对，应为 YYYY-MM-DD`;
+    const parsed = Date.parse(`${value}T00:00:00Z`);
+    if (!Number.isFinite(parsed)) return `${label} 不是有效日期`;
+    // 2026-02-31 这类日期会被 Date.parse 自动进位，必须回写比对
+    if (new Date(parsed).toISOString().slice(0, 10) !== value) return `${label} 不是有效日期`;
     if (value > today) return `${label} 不能晚于今天`;
     return null;
   }
@@ -81,4 +83,16 @@ export function validateValues(fields, values, today = todayISO()) {
     if (problem) return problem;
   }
   return null;
+}
+
+/**
+ * 多个字段至少填一个（例如身体指标不能只提交日期）。
+ * @param {Record<string,string>} values
+ * @param {string[]} names
+ * @param {string} message
+ * @returns {string|null}
+ */
+export function requireAny(values, names, message) {
+  const filled = names.some((name) => String(values[name] ?? '').trim() !== '');
+  return filled ? null : message;
 }

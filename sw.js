@@ -37,6 +37,18 @@ const SHELL = [
   './data/exercises.json',
 ];
 
+/** 允许进运行时缓存的路径：应用外壳 + 课表插图；完整动作库按设计不缓存。 */
+const CACHEABLE_PATHS = new Set(
+  SHELL
+    .filter((entry) => entry !== './')
+    .map((entry) => new URL(entry, self.location.href).pathname),
+);
+
+/** @param {URL} url */
+function isCacheable(url) {
+  return CACHEABLE_PATHS.has(url.pathname) || url.pathname.includes('/data/illustrations/');
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
@@ -86,8 +98,8 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request, { cache: 'no-cache' })
       .then((response) => {
-        // 只缓存成功的响应，避免把 404/500 固化进离线包
-        if (response.ok) {
+        // 只缓存成功的响应，且只限应用外壳/插图；避免完整动作库把 Cache Storage 撑大
+        if (response.ok && isCacheable(url)) {
           const copy = response.clone();
           caches.open(CACHE).then((cache) => cache.put(event.request, copy));
         }

@@ -7,7 +7,7 @@ import { h, banner, clear, toast, icon } from '../js/ui.js';
 import { todayISO, hevyMode, hevySyncStatus, fmtDateTime, HEVY_SYNC_STALE_HOURS } from '../js/data.js';
 import { describeRun } from '../js/submit.js';
 import { enqueue, enqueueHevyImport, resumeTaskById } from '../js/queue.js';
-import { dateRule, intRule, numberRule, validateValues } from '../js/validate.js';
+import { dateRule, intRule, numberRule, requireAny, validateValues } from '../js/validate.js';
 
 /** @param {any} ctx @param {string[]} rest */
 export function renderRecord(ctx, rest = []) {
@@ -94,7 +94,7 @@ function formPage(ctx, def) {
         min: field.min ?? null,
         step: field.step ?? (field.type === 'number' ? (field.integer ? '1' : 'any') : null),
         required,
-        inputmode: field.numeric ? 'decimal' : null,
+        inputmode: field.numeric ? (field.integer ? 'numeric' : 'decimal') : null,
       });
     }
     inputs[field.name] = el;
@@ -347,6 +347,7 @@ function bodyPage(ctx) {
     workflow: 'body.yml',
     submitLabel: '提交身体指标',
     hint: '同一天同一来源后一次覆盖前一次；体重请记在饮食里。',
+    validate: (v) => requireAny(v, ['waist_cm', 'body_fat_pct', 'skeletal_muscle_kg'], '至少填一项身体指标'),
     fields: [
       dateField(),
       { name: 'waist_cm', label: '腰围 cm', optional: true, type: 'number', numeric: true, rule: numberRule({ min: 50, max: 150 }) },
@@ -561,7 +562,8 @@ function proposalPage(ctx) {
         list.append(h('div', { class: 'empty' }, h('div', { class: 'big' }, '演示模式没有提案'), h('div', {}, '真实仓库里 AI 会在周复盘时生成 plan/proposals/week-*.json')));
         return;
       }
-      const dir = await ctx.api.actionsGet('contents/plan/proposals?ref=master').catch(() => []);
+      const ref = encodeURIComponent(ctx.api.cfg.ref);
+      const dir = await ctx.api.actionsGet(`contents/plan/proposals?ref=${ref}`).catch(() => []);
       const files = (dir || []).filter((f) => f.name.endsWith('.json'));
       clear(list);
       if (!files.length) {

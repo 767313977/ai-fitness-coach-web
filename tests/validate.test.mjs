@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { dateRule, intRule, numberRule, validateValues } from '../js/validate.js';
+import { dateRule, intRule, numberRule, requireAny, validateValues } from '../js/validate.js';
 
 const today = '2026-11-07';
 
@@ -34,7 +34,15 @@ test('日期不能晚于今天，也不能是非法日期', () => {
   const fields = [{ name: 'date', label: '日期', rule: dateRule() }];
   assert.ok(validateValues(fields, { date: '2026-11-08' }, today));
   assert.ok(validateValues(fields, { date: '2026-13-01' }, today));
+  assert.ok(validateValues(fields, { date: '2026-02-31' }, today));
   assert.equal(validateValues(fields, { date: '2026-11-07' }, today), null);
+});
+
+test('至少填一项：身体指标不能只提交日期', () => {
+  const names = ['waist_cm', 'body_fat_pct', 'skeletal_muscle_kg'];
+  assert.equal(requireAny({}, names, '至少填一项身体指标'), '至少填一项身体指标');
+  assert.equal(requireAny({ waist_cm: '  ' }, names, '至少填一项身体指标'), '至少填一项身体指标');
+  assert.equal(requireAny({ body_fat_pct: '20' }, names, '至少填一项身体指标'), null);
 });
 
 test('非数字与空值：空值跳过，非数字报错', () => {
