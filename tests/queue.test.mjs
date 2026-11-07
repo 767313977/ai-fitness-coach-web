@@ -4,9 +4,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  discardTask, enqueue, enqueueHevyImport, hevyRecoveryTasks, pendingSummary, receiptOnlyCount,
-  resumeTaskById, resumeUnfinished, taskKindLabel, taskStatusLabel, unsentCount, unsentTasks,
-  withWriteLock,
+  clearLocalState, discardTask, dropOtherScopes, enqueue, enqueueHevyImport, hevyRecoveryTasks,
+  isLeaseExpired, pendingSummary, pruneStaleTasks, receiptOnlyCount, resumeTaskById, resumeUnfinished,
+  setQueueScope, taskKindLabel, taskStatusLabel, unsentCount, unsentTasks, withWriteLock,
 } from '../js/queue.js';
 
 class MemoryStorage {
@@ -20,6 +20,7 @@ class MemoryStorage {
 function freshEnv() {
   globalThis.sessionStorage = new MemoryStorage();
   globalThis.localStorage = new MemoryStorage();
+  setQueueScope(null);
 }
 
 /** @param {any} [overrides] */
@@ -313,6 +314,106 @@ test('pendingSummary：展示任务类型、状态和提交时间', () => {
   assert.equal(summary.items[1].statusLabel, '提交中');
   assert.equal(summary.items[0].createdAt, '2026-11-07T10:00:00Z');
   assert.equal(summary.needsCheck, true);
+});
+
+test('任务按仓库作用域隔离，不会恢复到别的账户', async () => {
+  freshEnv();
+  setQueueScope('a/b@main');
+  await enqueue(makeApi(), { workflow: 'body.yml', inputs: {}, findTimeoutMs: 0 }).promise;
+  assert.equal(unsentCount(), 1);
+
+  setQueueScope('c/d@main');
+  assert.equal(unsentCount(), 0);
+  assert.equal(unsentTasks().length, 0);
+
+  setQueueScope('a/b@main');
+  assert.equal(unsentCount(), 1);
+});
+
+test('切换账户时清掉其他作用域的恢复任务', async () => {
+  freshEnv();
+  setQueueScope('a/b@main');
+  await enqueue(makeApi(), { workflow: 'body.yml', inputs: {}, findTimeoutMs: 0 }).promise;
+
+  setQueueScope('c/d@main');
+  dropOtherScopes();
+  setQueueScope('a/b@main');
+  assert.equal(unsentCount(), 0);
+});
+
+test('过期任务会被清理，新任务保留', () => {
+  freshEnv();
+  const old = {
+    id: 'q-old', workflow: 'body.yml', requestId: 'aaaaaaaa', status: 'unknown',
+    createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+  };
+  const now = new Date().toISOString();
+  const fresh = {
+    id: 'q-new', workflow: 'body.yml', requestId: 'bbbbbbbb', status: 'unknown',
+    createdAt: now, updatedAt: now,
+  };
+  sessionStorage.setItem('afc.queue.v2', JSON.stringify([old, fresh]));
+  assert.equal(pruneStaleTasks(), 1);
+  assert.deepEqual(unsentTasks().map((task) => task.id), ['q-new']);
+});
+
+test('退出登录时清空队列、凭证与租约', async () => {
+  freshEnv();
+  await enqueue(makeApi(), { workflow: 'body.yml', inputs: {}, findTimeoutMs: 0 }).promise;
+  localStorage.setItem('afc.queue.lease.v1', JSON.stringify({ id: 'x', until: Date.now() + 1000 }));
+  clearLocalState();
+  assert.equal(unsentCount(), 0);
+  assert.equal(localStorage.getItem('afc.queue.lease.v1'), null);
+  assert.equal(sessionStorage.getItem('afc.queue.v2'), null);
+});
+
+test('租约过期后可重新获取，心跳不会阻止进程退出', async () => {
+  freshEnv();
+  assert.equal(isLeaseExpired(null), true);
+  assert.equal(isLeaseExpired({ until: Date.now() - 1 }), true);
+  assert.equal(isLeaseExpired({ until: Date.now() + 60_000 }), false);
+
+  // Node 自带 navigator.locks，这里强制走 localStorage 租约兜底路径
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { value: { locks: undefined }, configurable: true });
+  try {
+    localStorage.setItem('afc.queue.lease.v1', JSON.stringify({ id: 'other-tab', until: Date.now() - 1000 }));
+    const value = await withWriteLock(async () => 'ok');
+    assert.equal(value, 'ok');
+    assert.equal(localStorage.getItem('afc.queue.lease.v1'), null);
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original);
+    else delete globalThis.navigator;
+  }
+});
+
+test('已有未确认的 Hevy 导入时禁止再导入，避免重复写入', () => {
+  freshEnv();
+  const now = new Date().toISOString();
+  sessionStorage.setItem('afc.queue.v2', JSON.stringify([{
+    id: 'q-hevy', kind: 'hevy-import', workflow: 'import_hevy_csv.yml',
+    requestId: 'cccccccc', status: 'unknown', uploadPath: 'uploads/hevy/x.csv',
+    createdAt: now, updatedAt: now,
+  }]));
+  assert.throws(
+    () => enqueueHevyImport(makeApi(), { name: 'hevy.csv', size: 10, type: 'text/csv' }, () => {}),
+    /还有一次 Hevy 导入/,
+  );
+});
+
+test('Hevy CSV 表头不对时本地拒绝，不上传', async () => {
+  freshEnv();
+  const api = makeApi();
+  const file = {
+    name: 'x.csv',
+    size: 20,
+    type: 'text/csv',
+    slice: () => ({ text: async () => 'foo,bar' }),
+  };
+  const queued = enqueueHevyImport(api, file, () => {});
+  await assert.rejects(queued.promise, /表头/);
+  assert.equal(api.calls.upload, 0);
+  assert.equal(unsentCount(), 0);
 });
 
 test('pendingSummary：终态不需要继续检查，未知类型有兜底文案', () => {

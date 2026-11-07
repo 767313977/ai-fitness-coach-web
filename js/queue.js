@@ -12,6 +12,7 @@ import { newRequestId, sleep } from './api.js';
 import {
   RUN_STATE, runWorkflow, resumeWorkflow, isTerminalState, fileToBase64,
 } from './submit.js';
+import { validateFile } from './hevy_csv.js';
 
 const STORE_KEY = 'afc.queue.v2';
 const HEVY_KEY = 'afc.hevy.recovery.v1';
@@ -23,6 +24,38 @@ const TAB_ID = `tab-${Math.random().toString(36).slice(2, 10)}`;
 
 let chain = Promise.resolve();
 let pending = 0;
+/** 当前仓库作用域（owner/repo@branch）：任务、凭证、Hevy 恢复记录都按它隔离 */
+let scope = null;
+
+/**
+ * 切换当前仓库作用域。切换账户/仓库后，其他作用域的任务不会出现在恢复列表里。
+ * @param {string|null|undefined} next
+ */
+export function setQueueScope(next) {
+  scope = next ? String(next) : null;
+}
+
+export function queueScope() {
+  return scope;
+}
+
+/** @param {any} item */
+function inScope(item) {
+  if (!item) return false;
+  // 老版本任务没有 scope：首次在某个作用域下读取时归到当前作用域，避免丢任务
+  if (!item.scope) return true;
+  return !scope || item.scope === scope;
+}
+
+/** @param {any[]} list */
+function adoptLegacyScope(list) {
+  if (!scope) return false;
+  let changed = false;
+  for (const item of list) {
+    if (item && !item.scope) { item.scope = scope; changed = true; }
+  }
+  return changed;
+}
 
 /** @returns {Storage|null} */
 function sessionStore() {
@@ -41,9 +74,11 @@ function readTasks() {
   try {
     const raw = store.getItem(STORE_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list)
+    const tasks = Array.isArray(list)
       ? list.filter((item) => item && item.workflow && item.requestId)
       : [];
+    if (adoptLegacyScope(tasks)) writeTasks(tasks);
+    return tasks;
   } catch {
     return [];
   }
@@ -91,11 +126,11 @@ function setTaskStatus(id, status, extra = {}) {
 
 /** @returns {any[]} */
 export function unsentTasks() {
-  return readTasks();
+  return readTasks().filter(inScope);
 }
 
 export function unsentCount() {
-  return readTasks().length + receiptOnlyCount();
+  return unsentTasks().length + receiptOnlyCount();
 }
 
 export function pendingCount() {
@@ -167,7 +202,11 @@ function readReceipts() {
   try {
     const raw = store.getItem(RECEIPT_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list.filter((item) => item && item.requestId && item.workflow) : [];
+    const receipts = Array.isArray(list)
+      ? list.filter((item) => item && item.requestId && item.workflow)
+      : [];
+    if (adoptLegacyScope(receipts)) writeReceipts(receipts);
+    return receipts;
   } catch {
     return [];
   }
@@ -187,6 +226,7 @@ function upsertReceipt(task) {
     requestId: task.requestId,
     workflow: task.workflow,
     kind: task.kind || 'workflow',
+    scope: task.scope || scope,
     createdAt: task.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     status: task.status || 'pending',
@@ -211,8 +251,8 @@ function removeReceipt(requestId) {
 
 /** 只有凭证、没有会话任务的数量（通常是提交后直接关了页面）。 */
 export function receiptOnlyCount() {
-  const ids = new Set(readTasks().map((task) => task.requestId));
-  return readReceipts().filter((item) => !ids.has(item.requestId)).length;
+  const ids = new Set(readTasks().filter(inScope).map((task) => task.requestId));
+  return readReceipts().filter((item) => inScope(item) && !ids.has(item.requestId)).length;
 }
 
 /* ---------------- Hevy 上传恢复（不含健康数据） ---------------- */
@@ -224,7 +264,11 @@ function readRecovery() {
   try {
     const raw = store.getItem(HEVY_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list.filter((item) => item && item.requestId && item.path) : [];
+    const records = Array.isArray(list)
+      ? list.filter((item) => item && item.requestId && item.path)
+      : [];
+    if (adoptLegacyScope(records)) writeRecovery(records);
+    return records;
   } catch {
     return [];
   }
@@ -240,9 +284,10 @@ function writeRecovery(list) {
 /** @param {{requestId: string, path: string, workflow: string, createdAt: string, status: string}} record */
 function saveRecovery(record) {
   const list = readRecovery();
+  const next = { ...record, scope: record.scope || scope };
   const index = list.findIndex((item) => item.requestId === record.requestId);
-  if (index >= 0) list[index] = { ...list[index], ...record };
-  else list.push(record);
+  if (index >= 0) list[index] = { ...list[index], ...next };
+  else list.push(next);
   writeRecovery(list);
 }
 
@@ -260,10 +305,99 @@ function removeRecovery(requestId) {
 
 /** 刷新/重开后，已上传但还没确认结果的 Hevy 导入。 */
 export function hevyRecoveryTasks() {
-  return readRecovery().filter((item) => !isTerminalState(item.status));
+  return readRecovery().filter((item) => inScope(item) && !isTerminalState(item.status));
+}
+
+/**
+ * 清理过期未完成任务/凭证/恢复记录（默认 7 天），避免本地存储无限增长。
+ * @param {number} [maxAgeMs]
+ * @param {number} [now]
+ * @returns {number} 清掉的任务数
+ */
+export function pruneStaleTasks(maxAgeMs = 7 * 86_400_000, now = Date.now()) {
+  const isStale = (item) => {
+    const at = Date.parse(item?.updatedAt || item?.createdAt || '');
+    return Number.isFinite(at) && at < now - maxAgeMs;
+  };
+  const tasks = readTasks();
+  const keptTasks = tasks.filter((item) => !isStale(item));
+  if (keptTasks.length !== tasks.length) writeTasks(keptTasks);
+
+  const receipts = readReceipts();
+  const keptReceipts = receipts.filter((item) => !isStale(item));
+  if (keptReceipts.length !== receipts.length) writeReceipts(keptReceipts);
+
+  const recovery = readRecovery();
+  const keptRecovery = recovery.filter((item) => !isStale(item));
+  if (keptRecovery.length !== recovery.length) writeRecovery(keptRecovery);
+
+  return tasks.length - keptTasks.length;
+}
+
+/**
+ * 切换账户/仓库后，删掉其他作用域的恢复记录，避免把 A 仓的任务恢复到 B 仓。
+ * @param {string|null} [current]
+ */
+export function dropOtherScopes(current = scope) {
+  if (!current) return;
+  const jobs = [
+    [readTasks, writeTasks],
+    [readReceipts, writeReceipts],
+    [readRecovery, writeRecovery],
+  ];
+  for (const [read, write] of jobs) {
+    const list = read();
+    const kept = list.filter((item) => !item.scope || item.scope === current);
+    if (kept.length !== list.length) write(kept);
+  }
+}
+
+/** 退出登录时清空队列相关本地状态（不碰仓库里的数据）。 */
+export function clearLocalState() {
+  for (const store of [sessionStore(), localStore()]) {
+    if (!store) continue;
+    for (const key of [STORE_KEY, RECEIPT_KEY, HEVY_KEY, LEASE_KEY]) {
+      try { store.removeItem(key); } catch { /* 忽略 */ }
+    }
+  }
+  stopLeaseHeartbeat();
+  pending = 0;
+  chain = Promise.resolve();
 }
 
 /* ---------------- 多标签页锁 ---------------- */
+
+/** 租约是否已过期（不存在也算过期）。 @param {any} lease @param {number} [now] */
+export function isLeaseExpired(lease, now = Date.now()) {
+  return !lease || !Number.isFinite(Number(lease.until)) || Number(lease.until) < now;
+}
+
+let leaseTimer = 0;
+
+/** 只续自己的租约，避免把别的标签页刚拿到的锁续掉。 */
+function renewLease() {
+  const store = localStore();
+  if (!store) return;
+  try {
+    const lease = JSON.parse(store.getItem(LEASE_KEY) || 'null');
+    if (lease?.id === TAB_ID) {
+      store.setItem(LEASE_KEY, JSON.stringify({ id: TAB_ID, until: Date.now() + LEASE_MS }));
+    }
+  } catch { /* 忽略 */ }
+}
+
+function startLeaseHeartbeat() {
+  stopLeaseHeartbeat();
+  const timer = setInterval(renewLease, Math.floor(LEASE_MS / 4));
+  // Node 测试环境下不要阻止进程退出
+  if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+  leaseTimer = timer;
+}
+
+function stopLeaseHeartbeat() {
+  if (leaseTimer) clearInterval(leaseTimer);
+  leaseTimer = 0;
+}
 
 async function acquireLease() {
   const store = localStore();
@@ -271,8 +405,10 @@ async function acquireLease() {
   for (let i = 0; i < 420; i += 1) {
     let lease = null;
     try { lease = JSON.parse(store.getItem(LEASE_KEY) || 'null'); } catch { lease = null; }
-    if (!lease || lease.until < Date.now() || lease.id === TAB_ID) {
+    if (isLeaseExpired(lease) || lease.id === TAB_ID) {
       store.setItem(LEASE_KEY, JSON.stringify({ id: TAB_ID, until: Date.now() + LEASE_MS }));
+      // 运行超过 2 分钟时持续续期，不会中途丢掉锁；标签页崩溃后心跳停止，租约自然过期
+      startLeaseHeartbeat();
       return;
     }
     await sleep(1_000);
@@ -281,6 +417,7 @@ async function acquireLease() {
 }
 
 function releaseLease() {
+  stopLeaseHeartbeat();
   const store = localStore();
   if (!store) return;
   try {
@@ -345,6 +482,7 @@ function createTask(kind, workflow, inputs) {
     inputs,
     requestId: newRequestId(),
     status: 'pending',
+    scope,
     createdAt: now,
     updatedAt: now,
   };
@@ -426,6 +564,12 @@ export function enqueueHevyImport(api, file, onStatus) {
   for (const old of readTasks()) {
     if (old.kind === 'hevy-import' && !old.uploadPath) discardTask(old.id);
   }
+  const unresolved = readTasks().filter((item) => (
+    inScope(item) && item.kind === 'hevy-import' && item.uploadPath
+  ));
+  if (unresolved.length) {
+    throw new Error('还有一次 Hevy 导入没确认结果：先点顶部「继续检查」，确认完成或放弃后再导入新文件，避免重复导入。');
+  }
   const task = createTask('hevy-import', 'import_hevy_csv.yml', {});
   upsertTask(task);
   upsertReceipt(task);
@@ -433,6 +577,9 @@ export function enqueueHevyImport(api, file, onStatus) {
     onStatus,
     prepare: async (current) => {
       if (!file) throw definitiveError('没有选择 CSV 文件，请重新选择');
+      // 先做本地校验，避免把明显错误的文件传上去再失败
+      const invalid = await validateFile(file);
+      if (invalid) throw definitiveError(invalid);
       onStatus('上传 CSV');
       const base = file.name.replace(/[^\w.\-]+/g, '_');
       const safeName = base.replace(/\.csv$/i, '') + '.csv';
@@ -501,7 +648,7 @@ export function resumeTask(api, task, opts = {}) {
 
 /** @param {import('./api.js').GitHubApi} api @param {string} id @param {any} [opts] */
 export async function resumeTaskById(api, id, opts = {}) {
-  const task = readTasks().find((item) => item.id === id || item.requestId === id);
+  const task = readTasks().filter(inScope).find((item) => item.id === id || item.requestId === id);
   if (!task) throw new Error('这条任务已经结束或不存在');
   return resumeTask(api, task, opts).promise;
 }
@@ -514,7 +661,7 @@ export async function resumeTaskById(api, id, opts = {}) {
 export async function resumeUnfinished(api, opts = {}) {
   /** @type {{task?: any, receipt?: any, result?: any, error?: any}[]} */
   const results = [];
-  const tasks = readTasks();
+  const tasks = readTasks().filter(inScope);
 
   for (const record of hevyRecoveryTasks()) {
     if (tasks.some((task) => task.requestId === record.requestId)) continue;
@@ -526,6 +673,7 @@ export async function resumeUnfinished(api, opts = {}) {
       requestId: record.requestId,
       uploadPath: record.path,
       status: 'unknown',
+      scope: record.scope || scope,
       createdAt: record.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -543,8 +691,9 @@ export async function resumeUnfinished(api, opts = {}) {
   }
 
   // 只有凭证、没有会话任务：通常是提交后直接关了页面，无法重提，但可以确认结果
-  const known = new Set(readTasks().map((task) => task.requestId));
+  const known = new Set(readTasks().filter(inScope).map((task) => task.requestId));
   for (const receipt of readReceipts()) {
+    if (!inScope(receipt)) continue;
     if (known.has(receipt.requestId)) continue;
     try {
       const result = await resumeWorkflow(api, {
@@ -563,9 +712,17 @@ export async function resumeUnfinished(api, opts = {}) {
   return results;
 }
 
-/** 用户主动放弃一条无法恢复的任务（例如上传阶段失败、没有文件路径）。 @param {string} id */
-export function discardTask(id) {
+/**
+ * 用户主动放弃一条无法恢复的任务（例如上传阶段失败、没有文件路径）。
+ * 传了 api 且任务有上传路径时，顺手删掉仓库里的临时 CSV，避免残留。
+ * @param {string} id
+ * @param {import('./api.js').GitHubApi} [api]
+ */
+export function discardTask(id, api) {
   const task = readTasks().find((item) => item.id === id);
   removeTask(id);
   if (task?.requestId) removeRecovery(task.requestId);
+  if (api && task?.uploadPath && typeof api.deleteFile === 'function') {
+    api.deleteFile(task.uploadPath, `cleanup: hevy [${task.requestId}]`).catch(() => { /* 清理失败不阻塞 */ });
+  }
 }

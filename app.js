@@ -6,7 +6,8 @@ import { h, clear, icon, toast, banner } from './js/ui.js';
 import { DEMO_DATA } from './js/demo.js';
 import { noticeFromError, offlineText } from './js/status.js';
 import {
-  hasPending, hevyRecoveryTasks, pendingSummary, resumeUnfinished, unsentCount, unsentTasks,
+  clearLocalState, discardTask, hasPending, hevyRecoveryTasks, pendingSummary, pruneStaleTasks,
+  resumeUnfinished, setQueueScope, dropOtherScopes, unsentCount, unsentTasks,
 } from './js/queue.js';
 import { renderToday } from './pages/today.js';
 import { renderWeek } from './pages/week.js';
@@ -128,6 +129,10 @@ async function connect(opts = {}) {
       }
       state.auth = { ...auth, branch: picked.branch };
       state.api = picked.api;
+      // 任务/凭证按「账户/仓库@分支」隔离：切仓后不恢复别的仓的任务，并清掉 7 天前的残留
+      setQueueScope(`${auth.owner}/${auth.repo}@${picked.branch}`);
+      dropOtherScopes();
+      pruneStaleTasks();
       state.data = await loadAll(state.api, { fresh: Boolean(opts.fresh) });
       // 成功加载后：只有确实回落缓存才保留离线提示，联网恢复即自动消失
       state.notice = state.data.offline
@@ -184,7 +189,7 @@ function render() {
     content.append(renderError(state.error));
   } else {
     // 离线 / 限流是持续状态，不是一次性 toast：成功刷新后自动消失
-    if (state.notice) {
+    if (state.notice && !state.demo) {
       content.append(h('div', { class: 'card' },
         banner(state.notice.text, 'warn'),
         h('button', { class: 'btn small', onClick: () => refresh() }, '重试'),
@@ -194,16 +199,27 @@ function render() {
             : '限流只影响读取，不会重复写入；恢复后点「重试」即可。'),
       ));
     }
-    const unsent = unsentCount();
-    const tasks = unsentTasks();
+    const unsent = state.demo ? 0 : unsentCount();
+    const tasks = state.demo ? [] : unsentTasks();
     const summary = pendingSummary(tasks);
-    const hevyPending = hevyRecoveryTasks();
+    const hevyPending = state.demo ? [] : hevyRecoveryTasks();
     if (unsent > 0 || hevyPending.length > 0) {
       const receiptOnly = unsent - tasks.length;
       content.append(h('div', { class: 'card' },
         banner(`有 ${unsent} 条提交还没确认结果（刷新、断网或超时都不会丢）。`, 'warn'),
         ...summary.items.slice(0, 4).map((item) => h('div', { class: 'hint', style: 'margin-top:0' },
-          `${item.label} · ${item.statusLabel}${item.createdAt ? ` · ${relTime(item.createdAt)}` : ''}`)),
+          `${item.label} · ${item.statusLabel}${item.createdAt ? ` · ${relTime(item.createdAt)}` : ''}`,
+          ['unknown', 'timeout', 'uploaded'].includes(item.status)
+            ? h('button', {
+              class: 'btn small ghost',
+              style: 'margin-left:8px;padding:2px 8px',
+              onClick: () => {
+                if (!confirm('放弃后不会再检查这次提交；如果上传过 CSV，会同时删掉仓库里的临时文件。确定？')) return;
+                discardTask(item.id, state.api ?? undefined);
+                render();
+              },
+            }, '放弃')
+            : null)),
         receiptOnly > 0
           ? h('div', { class: 'hint', style: 'margin-top:0' },
             `另有 ${receiptOnly} 条是关页面时留下的提交凭证，只能确认结果、不能重发。`)
@@ -497,8 +513,8 @@ function renderError(error) {
     banner(errorText(error), 'err'),
     h('button', { class: 'btn block', onClick: () => connect({ fresh: true }) }, '重试'),
     h('button', { class: 'btn ghost block', style: 'margin-top:8px', onClick: () => {
-      clearCache(); saveAuth(null);
-      state.auth = null; state.data = null; state.error = null; render();
+      clearCache(); clearLocalState(); saveAuth(null);
+      state.auth = null; state.data = null; state.error = null; state.notice = null; render();
     } }, '重新登录'),
   );
 }

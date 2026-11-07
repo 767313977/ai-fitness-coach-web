@@ -5,7 +5,7 @@
  * 所以清理时必须只删本项目前缀的缓存，绝不能清空整个 Cache Storage。
  */
 export const CACHE_PREFIX = 'afc-web:';
-export const CACHE_NAME = `${CACHE_PREFIX}shell:v12`;
+export const CACHE_NAME = `${CACHE_PREFIX}shell:v13`;
 
 /** @param {string} key */
 export function isOwnCache(key) {

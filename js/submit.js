@@ -74,7 +74,16 @@ export async function runWorkflow(api, opts) {
   const status = opts.onStatus || (() => {});
 
   status('核对是否已派发');
-  let run = await api.findRunOnce(id).catch(() => null);
+  let run;
+  try {
+    run = await api.findRunOnce(id);
+  } catch (error) {
+    // 查询失败 ≠ 没有历史任务：此时派发可能重复写入，必须先停下来让用户「继续检查」
+    throw new Error(
+      `无法确认这次提交是否已经派发（${error?.message ?? error}）。为避免重复写入，已停止派发；`
+      + '网络恢复后点「继续检查」。',
+    );
+  }
 
   if (!run) {
     try {
@@ -83,7 +92,12 @@ export async function runWorkflow(api, opts) {
     } catch (error) {
       // 网络异常：先按 request_id 再查一次，可能已经派发成功但响应丢了
       status('派发结果未知，正在核对…');
-      run = await api.findRunOnce(id).catch(() => null);
+      try {
+        run = await api.findRunOnce(id);
+      } catch {
+        // 连核对都失败：保留原始派发错误，任务会以 unknown 保留，不会自动重发
+        throw error;
+      }
       if (!run) throw error;
     }
   }
@@ -113,7 +127,13 @@ export async function runWorkflow(api, opts) {
  */
 export async function resumeWorkflow(api, opts) {
   opts.onStatus?.('查找已有运行');
-  const run = await api.findRunOnce(opts.requestId).catch(() => null);
+  let run;
+  try {
+    run = await api.findRunOnce(opts.requestId);
+  } catch (error) {
+    // 查不到 ≠ 没派发：保留任务，交给队列标成 unknown，稍后再查
+    throw new Error(`查询运行记录失败：${error?.message ?? error}`);
+  }
   if (!run) return { id: opts.requestId, state: RUN_STATE.unknown, run: null };
   if (run.status === 'completed') {
     return { id: opts.requestId, state: classifyConclusion(run.conclusion), run };

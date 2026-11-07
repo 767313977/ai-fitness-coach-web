@@ -29,6 +29,7 @@ const SHELL = [
   './js/library_state.js',
   './js/rep.js',
   './js/status.js',
+  './js/hevy_csv.js',
   './js/validate.js',
   './js/cache_policy.js',
   './pages/today.js',

@@ -324,11 +324,22 @@ export class GitHubApi {
   }
 
   /**
+   * 写操作前的强制校验：仓库必须仍是 Private，且元信息必须读取成功。
+   * 隐私状态未知（401/403/404/断网）时抛错，调用方不得继续写入。
+   */
+  async assertPrivateRepo() {
+    const meta = await this.repoMeta();
+    if (!meta.private) throw new PublicRepoError();
+    return meta;
+  }
+
+  /**
    * 派发一个写入工作流。
    * @param {string} workflowFile 例如 checkin.yml
    * @param {Record<string,string>} inputs
    */
   async dispatch(workflowFile, inputs) {
+    await this.assertPrivateRepo();
     const url = `${API_ROOT}/repos/${encodeURIComponent(this.cfg.owner)}/${encodeURIComponent(this.cfg.repo)}/actions/workflows/${encodeURIComponent(workflowFile)}/dispatches`;
     let res;
     try {
@@ -414,6 +425,7 @@ export class GitHubApi {
    * @param {string} message 提交信息（沿用 App 的 `upload: hevy [id]` 约定）
    */
   async putFile(path, contentBase64, message) {
+    await this.assertPrivateRepo();
     const encoded = path.split('/').map(encodeURIComponent).join('/');
     const url = `${API_ROOT}/repos/${encodeURIComponent(this.cfg.owner)}/${encodeURIComponent(this.cfg.repo)}/contents/${encoded}`;
     /** @type {Record<string, any>} */
@@ -438,6 +450,47 @@ export class GitHubApi {
     }
     if (!res.ok) throw new ApiError(`上传失败：GitHub 返回 ${res.status}`, res.status);
     return res.json();
+  }
+
+  /**
+   * 删除 uploads/ 下的临时文件（Hevy 上传失败或人工放弃时清理）。
+   * 限定 uploads/ 前缀，避免误删数据文件；文件已不存在视为成功。
+   * @param {string} path
+   * @param {string} message
+   */
+  async deleteFile(path, message) {
+    if (!/^uploads\/[A-Za-z0-9._/-]+$/.test(path) || path.includes('..')) {
+      throw new ApiError('只允许删除 uploads/ 下的临时文件', 400);
+    }
+    await this.assertPrivateRepo();
+    const encoded = path.split('/').map(encodeURIComponent).join('/');
+    const url = `${API_ROOT}/repos/${encodeURIComponent(this.cfg.owner)}/${encodeURIComponent(this.cfg.repo)}/contents/${encoded}`;
+
+    let sha = null;
+    try {
+      const meta = await this.actionsGet(`contents/${encoded}?ref=${encodeURIComponent(this.cfg.ref)}`);
+      sha = meta?.sha ?? null;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return;
+      throw error;
+    }
+    if (!sha) return;
+
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${this.cfg.token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message, sha, branch: this.cfg.ref }),
+    });
+    if (res.status === 404) return;
+    if (res.status === 403 || res.status === 429) {
+      throw await forbiddenError(res, 'PAT 缺少 Contents 写权限：清理临时文件需要 Read and write');
+    }
+    if (!res.ok) throw new ApiError(`删除临时文件失败：GitHub 返回 ${res.status}`, res.status);
   }
 }
 

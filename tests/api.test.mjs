@@ -189,6 +189,72 @@ test('429 也统一提示限流，而不是「GitHub 返回 429」', async () =>
   );
 });
 
+test('写操作前确认私有：公开仓库不派发', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    calls.push(`${init.method || 'GET'} ${u}`);
+    if (u.endsWith('/repos/owner/public-write')) return json({ private: false });
+    throw new Error(`不应访问：${u}`);
+  };
+  const api = new GitHubApi({ owner: 'owner', repo: 'public-write', token: 'dummy', ref: 'main' });
+  await assert.rejects(api.dispatch('checkin.yml', {}), (error) => error instanceof PublicRepoError);
+  assert.equal(calls.some((line) => line.includes('/dispatches')), false);
+});
+
+test('写操作前确认私有：隐私状态未知时禁止写入', async () => {
+  let dispatched = false;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/repos/owner/unknown-private')) {
+      return json({ message: 'Resource not accessible' }, 403);
+    }
+    if (u.includes('/dispatches')) { dispatched = true; return new Response(null, { status: 204 }); }
+    throw new Error(`不应访问：${u}`);
+  };
+  const api = new GitHubApi({ owner: 'owner', repo: 'unknown-private', token: 'dummy', ref: 'main' });
+  await assert.rejects(api.dispatch('checkin.yml', {}), (error) => error instanceof ApiError);
+  assert.equal(dispatched, false);
+});
+
+test('确认私有后才真正派发', async () => {
+  let dispatched = false;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/repos/owner/private-write')) {
+      return json({ private: true, permissions: { push: true } });
+    }
+    if (u.includes('/dispatches')) {
+      dispatched = true;
+      assert.equal(init.method, 'POST');
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`不应访问：${u}`);
+  };
+  const api = new GitHubApi({ owner: 'owner', repo: 'private-write', token: 'dummy', ref: 'main' });
+  await api.dispatch('checkin.yml', { request_id: 'abcd1234' });
+  assert.equal(dispatched, true);
+});
+
+test('putFile：公开仓库拒绝上传', async () => {
+  let put = false;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/repos/owner/public-upload')) return json({ private: false });
+    if (init.method === 'PUT') { put = true; return json({}); }
+    throw new Error(`不应访问：${u}`);
+  };
+  const api = new GitHubApi({ owner: 'owner', repo: 'public-upload', token: 'dummy', ref: 'main' });
+  await assert.rejects(api.putFile('uploads/hevy/a.csv', 'AA==', 'x'), (error) => error instanceof PublicRepoError);
+  assert.equal(put, false);
+});
+
+test('deleteFile：只允许删 uploads/ 下的文件', async () => {
+  const api = new GitHubApi({ owner: 'owner', repo: 'repo', token: 'dummy', ref: 'main' });
+  await assert.rejects(api.deleteFile('data/diet.csv', 'x'), /uploads/);
+  await assert.rejects(api.deleteFile('uploads/../data/diet.csv', 'x'), /uploads/);
+});
+
 test('request_id 是 8 位小写十六进制且不重复', () => {
   const seen = new Set();
   for (let i = 0; i < 500; i += 1) {
@@ -268,6 +334,14 @@ test('pickBranch：所有候选分支都没有 config 时报分支错误', async
       && error.status === 404
       && /config\.json/.test(error.message),
   );
+});
+
+test('缓存键按账户、仓库、分支隔离', () => {
+  const a = new GitHubApi({ owner: 'a', repo: 'r', token: 't', ref: 'main' });
+  const b = new GitHubApi({ owner: 'b', repo: 'r', token: 't', ref: 'main' });
+  const c = new GitHubApi({ owner: 'a', repo: 'r', token: 't', ref: 'dev' });
+  assert.notEqual(a.cacheKey('config.json'), b.cacheKey('config.json'));
+  assert.notEqual(a.cacheKey('config.json'), c.cacheKey('config.json'));
 });
 
 test('urlFor 使用传入的分支，不写死 master', () => {

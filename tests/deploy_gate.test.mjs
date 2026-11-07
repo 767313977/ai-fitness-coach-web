@@ -24,3 +24,23 @@ test('Pages 工作流具备部署所需权限', () => {
   assert.match(workflow, /pages:\s*write/);
   assert.match(workflow, /id-token:\s*write/);
 });
+
+test('PR 只跑测试，永远不会触发部署', () => {
+  assert.match(workflow, /^  pull_request:/m);
+  assert.match(workflow, /if:\s*github\.event_name != 'pull_request'/);
+});
+
+test('权限按 Job 最小化：test 不得拿 pages / id-token', () => {
+  const testJob = workflow.split(/^  deploy:/m)[0];
+  assert.match(testJob, /permissions:\s*\n\s+contents: read/);
+  assert.doesNotMatch(testJob, /pages:\s*write/);
+  assert.doesNotMatch(testJob, /id-token:\s*write/);
+});
+
+test('所有第三方 Action 固定到完整 SHA', () => {
+  const uses = [...workflow.matchAll(/uses:\s*([^\s#]+)/g)].map((match) => match[1]);
+  assert.ok(uses.length >= 4, `只找到 ${uses.length} 个 uses`);
+  for (const ref of uses) {
+    assert.match(ref, /@[0-9a-f]{40}$/, `${ref} 没有固定到完整 SHA`);
+  }
+});

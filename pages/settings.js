@@ -2,6 +2,7 @@
 /** 设置：账号、连接测试、数据导出、缓存、演示模式。 */
 import { h, banner, clear, toast } from '../js/ui.js';
 import { clearCache } from '../js/api.js';
+import { clearLocalState } from '../js/queue.js';
 import { hevyMode, hevySyncStatus, fmtDateTime, HEVY_SYNC_STALE_HOURS } from '../js/data.js';
 
 const AUTH_KEY = 'afc.auth.v1';
@@ -88,8 +89,9 @@ export function renderSettings(ctx) {
         ctx.refresh();
       } }, '清缓存并刷新'),
       h('button', { class: 'btn small danger', onClick: () => {
-        if (!confirm('退出后会清掉本机保存的 PAT 和缓存的数据，确定？')) return;
+        if (!confirm('退出后会清掉本机保存的 PAT、未完成任务的恢复记录和缓存数据，确定？')) return;
         clearCache();
+        clearLocalState();
         localStorage.removeItem(AUTH_KEY);
         sessionStorage.removeItem(AUTH_KEY);
         sessionStorage.removeItem(DEMO_KEY);
