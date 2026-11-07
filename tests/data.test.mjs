@@ -3,9 +3,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { weekForecast, addDays, weekStart, weekday } from '../js/data.js';
+import { weekForecast, addDays, weekStart, weekday, loadAll } from '../js/data.js';
 import { matchesCategory, CATEGORIES } from '../js/dataset.js';
 import { DEMO_DATA } from '../js/demo.js';
+
+class NotFound extends Error {
+  constructor(path) { super(path); this.name = 'NotFoundError'; }
+}
+
+/** @param {{mode: 'csv'|'api', syncMissing?: boolean}} opts */
+function fakeApi({ mode, syncMissing = true }) {
+  return {
+    lastOffline: null,
+    async raw(path) {
+      if (path === 'config.json') return JSON.stringify({ hevy_mode: mode });
+      if (path === 'data/sync_state.json' && syncMissing) throw new NotFound(path);
+      if (path === 'review/index.json') throw new NotFound(path);
+      if (path === 'data/summary.json') {
+        return JSON.stringify({ week: { start: '2026-11-02', end: '2026-11-08' } });
+      }
+      return '';
+    },
+  };
+}
 
 const routine = {
   rotation: {},
@@ -81,4 +101,16 @@ test('演示数据是虚构人物且结构完整', () => {
   assert.equal(DEMO_DATA.config.athlete.name, '演示用户');
   assert.equal(DEMO_DATA.routine.days.length, 7);
   assert.ok(DEMO_DATA.summary.body.waist_weekly_8w.length > 0);
+});
+
+test('CSV 模式下 sync_state.json 缺失不算“缺失文件”', async () => {
+  const data = await loadAll(fakeApi({ mode: 'csv' }));
+  assert.equal(data.missing.includes('data/sync_state.json'), false);
+  // 其它真正缺的文件仍然要提示
+  assert.equal(data.missing.includes('review/index.json'), true);
+});
+
+test('API 模式下 sync_state.json 缺失要提示', async () => {
+  const data = await loadAll(fakeApi({ mode: 'api' }));
+  assert.equal(data.missing.includes('data/sync_state.json'), true);
 });

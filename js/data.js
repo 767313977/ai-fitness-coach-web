@@ -85,8 +85,15 @@ export async function loadAll(api, opts = {}) {
     catch { corrupt.push(files[key].path); return null; }
   };
 
+  const config = parse('config');
+  // CSV 模式不依赖 sync_state.json；它不存在是正常状态，不应报“缺失文件”。
+  // 只有 API 模式（云端自动同步）才把它当作必需文件。
+  const expectedMissing = hevyMode(config) === 'api'
+    ? missing
+    : missing.filter((path) => path !== files.syncState.path);
+
   return {
-    config: parse('config'),
+    config,
     summary: parse('summary'),
     routine: parse('routine'),
     reviewIndex: parse('reviewIndex'),
@@ -98,7 +105,7 @@ export async function loadAll(api, opts = {}) {
     syncState: parse('syncState'),
     loadedAt: new Date().toISOString(),
     /** 仓库里不存在的可选文件，设置页会汇总提示 */
-    missing,
+    missing: expectedMissing,
     /** 缓存里的 JSON 坏了（解析失败），引导用户清缓存 */
     corrupt,
     /** 本次是否有请求因断网回落到缓存 */
