@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  discardTask, enqueue, enqueueHevyImport, hevyRecoveryTasks,
+  discardTask, enqueue, enqueueHevyImport, hevyRecoveryTasks, receiptOnlyCount,
   resumeTaskById, resumeUnfinished, unsentCount, unsentTasks, withWriteLock,
 } from '../js/queue.js';
 
@@ -171,6 +171,85 @@ test('Hevy 上传失败：任务移除并提示重新选择文件', async () => 
   await assert.rejects(queued.promise, /重新选择文件/);
   assert.equal(unsentCount(), 0);
   assert.equal(hevyRecoveryTasks().length, 0);
+});
+
+test('关页面后：只凭 localStorage 凭证确认结果，且不含健康数据', async () => {
+  freshEnv();
+  const api = makeApi();
+  const queued = enqueue(api, {
+    workflow: 'diet.yml',
+    inputs: { kcal: '1999' },
+    findTimeoutMs: 0,
+  });
+  const result = await queued.promise;
+  assert.equal(result.state, 'unknown');
+  const requestId = queued.task.requestId;
+  assert.equal(receiptOnlyCount(), 0); // 会话任务还在时不算“只有凭证”
+
+  // 模拟关掉标签页：sessionStorage 清空，只留 localStorage 凭证
+  globalThis.sessionStorage.clear();
+  assert.equal(receiptOnlyCount(), 1);
+  assert.equal(unsentCount(), 1);
+  const localText = JSON.stringify([...globalThis.localStorage.map.values()]);
+  assert.equal(localText.includes('1999'), false, '凭证里不能出现表单健康数据');
+
+  const resumeApi = makeApi({ findRunOnce: () => completedSuccess });
+  const resumed = await resumeUnfinished(resumeApi);
+  assert.equal(resumed[0].receipt.requestId, requestId);
+  assert.equal(resumed[0].result.state, 'success');
+  assert.equal(receiptOnlyCount(), 0);
+  assert.equal(unsentCount(), 0);
+});
+
+test('轮询期间断网：不判定失败，网络恢复后继续', async () => {
+  freshEnv();
+  let polls = 0;
+  const running = { id: 7, status: 'in_progress' };
+  const api = makeApi({
+    findRunOnce: () => running,
+    runStatus: () => {
+      polls += 1;
+      if (polls < 2) throw new Error('network down');
+      return { id: 7, status: 'completed', conclusion: 'success' };
+    },
+  });
+  const result = await enqueue(api, {
+    workflow: 'checkin.yml',
+    inputs: {},
+    runTimeoutMs: 500,
+    pollMs: 1,
+  }).promise;
+  assert.equal(result.state, 'success');
+  assert.equal(polls, 2);
+  assert.equal(unsentCount(), 0);
+});
+
+test('派发响应丢失：按原 request_id 找回运行，不重复派发', async () => {
+  freshEnv();
+  let lookups = 0;
+  const api = makeApi({
+    findRunOnce: () => {
+      lookups += 1;
+      return lookups === 1 ? null : { id: 3, status: 'completed', conclusion: 'success' };
+    },
+    dispatch: () => { throw Object.assign(new Error('网络中断'), { status: 0 }); },
+  });
+  const result = await enqueue(api, { workflow: 'body.yml', inputs: {} }).promise;
+  assert.equal(result.state, 'success');
+  assert.equal(api.calls.dispatch, 1);
+  assert.equal(unsentCount(), 0);
+});
+
+test('连续提交多个任务：串行派发，全部完成后移除', async () => {
+  freshEnv();
+  const api = makeApi({ findRun: () => completedSuccess });
+  const a = enqueue(api, { workflow: 'checkin.yml', inputs: {} });
+  const b = enqueue(api, { workflow: 'diet.yml', inputs: {} });
+  const [ra, rb] = await Promise.all([a.promise, b.promise]);
+  assert.equal(ra.state, 'success');
+  assert.equal(rb.state, 'success');
+  assert.equal(api.calls.dispatch, 2);
+  assert.equal(unsentCount(), 0);
 });
 
 test('多标签页：Web Locks 串行执行，不会同时派发', async () => {

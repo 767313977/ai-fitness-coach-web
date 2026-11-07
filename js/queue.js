@@ -15,6 +15,7 @@ import {
 
 const STORE_KEY = 'afc.queue.v2';
 const HEVY_KEY = 'afc.hevy.recovery.v1';
+const RECEIPT_KEY = 'afc.receipts.v1';
 const LOCK_NAME = 'afc.github.write';
 const LEASE_KEY = 'afc.queue.lease.v1';
 const LEASE_MS = 2 * 60_000;
@@ -66,7 +67,10 @@ function upsertTask(task) {
 
 /** @param {string} id */
 function removeTask(id) {
-  writeTasks(readTasks().filter((item) => item.id !== id));
+  const list = readTasks();
+  const task = list.find((item) => item.id === id);
+  writeTasks(list.filter((item) => item.id !== id));
+  if (task?.requestId) removeReceipt(task.requestId);
 }
 
 /**
@@ -82,6 +86,7 @@ function setTaskStatus(id, status, extra = {}) {
   task.updatedAt = new Date().toISOString();
   Object.assign(task, extra);
   writeTasks(list);
+  updateReceipt(task.requestId, status);
 }
 
 /** @returns {any[]} */
@@ -90,7 +95,7 @@ export function unsentTasks() {
 }
 
 export function unsentCount() {
-  return readTasks().length;
+  return readTasks().length + receiptOnlyCount();
 }
 
 export function pendingCount() {
@@ -99,6 +104,63 @@ export function pendingCount() {
 
 export function hasPending() {
   return pending > 0;
+}
+
+/** 最近一次提交的凭证：只存 request_id / 工作流 / 状态，不含任何健康数据。
+ *  关页面后用它去 GitHub 查结果，避免任务“无提示消失”。
+ *  @returns {any[]} */
+function readReceipts() {
+  const store = localStore();
+  if (!store) return [];
+  try {
+    const raw = store.getItem(RECEIPT_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((item) => item && item.requestId && item.workflow) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** @param {any[]} list */
+function writeReceipts(list) {
+  const store = localStore();
+  if (!store) return;
+  try { store.setItem(RECEIPT_KEY, JSON.stringify(list)); } catch { /* 忽略 */ }
+}
+
+/** @param {any} task */
+function upsertReceipt(task) {
+  const list = readReceipts();
+  const record = {
+    requestId: task.requestId,
+    workflow: task.workflow,
+    kind: task.kind || 'workflow',
+    createdAt: task.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: task.status || 'pending',
+  };
+  const index = list.findIndex((item) => item.requestId === record.requestId);
+  if (index >= 0) list[index] = record;
+  else list.push(record);
+  writeReceipts(list);
+}
+
+/** @param {string} requestId @param {string} status */
+function updateReceipt(requestId, status) {
+  writeReceipts(readReceipts().map((item) => (
+    item.requestId === requestId ? { ...item, status, updatedAt: new Date().toISOString() } : item
+  )));
+}
+
+/** @param {string} requestId */
+function removeReceipt(requestId) {
+  writeReceipts(readReceipts().filter((item) => item.requestId !== requestId));
+}
+
+/** 只有凭证、没有会话任务的数量（通常是提交后直接关了页面）。 */
+export function receiptOnlyCount() {
+  const ids = new Set(readTasks().map((task) => task.requestId));
+  return readReceipts().filter((item) => !ids.has(item.requestId)).length;
 }
 
 /* ---------------- Hevy 上传恢复（不含健康数据） ---------------- */
@@ -296,6 +358,7 @@ export function enqueue(api, opts) {
   const task = createTask(opts.kind || 'workflow', opts.workflow, opts.inputs || {});
   if (opts.requestId) task.requestId = opts.requestId;
   upsertTask(task);
+  upsertReceipt(task);
   return runTask(api, task, opts);
 }
 
@@ -313,6 +376,7 @@ export function enqueueHevyImport(api, file, onStatus) {
   }
   const task = createTask('hevy-import', 'import_hevy_csv.yml', {});
   upsertTask(task);
+  upsertReceipt(task);
   return runTask(api, task, {
     onStatus,
     prepare: async (current) => {
@@ -396,7 +460,7 @@ export async function resumeTaskById(api, id, opts = {}) {
  * @param {{onStatus?: (s: string) => void, runTimeoutMs?: number, pollMs?: number}} [opts]
  */
 export async function resumeUnfinished(api, opts = {}) {
-  /** @type {{task: any, result?: any, error?: any}[]} */
+  /** @type {{task?: any, receipt?: any, result?: any, error?: any}[]} */
   const results = [];
   const tasks = readTasks();
 
@@ -423,6 +487,25 @@ export async function resumeUnfinished(api, opts = {}) {
       results.push({ task, result });
     } catch (error) {
       results.push({ task, error });
+    }
+  }
+
+  // 只有凭证、没有会话任务：通常是提交后直接关了页面，无法重提，但可以确认结果
+  const known = new Set(readTasks().map((task) => task.requestId));
+  for (const receipt of readReceipts()) {
+    if (known.has(receipt.requestId)) continue;
+    try {
+      const result = await resumeWorkflow(api, {
+        requestId: receipt.requestId,
+        onStatus: opts.onStatus,
+        runTimeoutMs: opts.runTimeoutMs ?? 15_000,
+        pollMs: opts.pollMs,
+      });
+      if (isTerminalState(result.state)) removeReceipt(receipt.requestId);
+      else updateReceipt(receipt.requestId, result.state);
+      results.push({ receipt, result });
+    } catch (error) {
+      results.push({ receipt, error });
     }
   }
   return results;
