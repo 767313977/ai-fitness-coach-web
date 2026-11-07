@@ -37,6 +37,21 @@ export const ZH_TAGS = {
   拉伸: ['stretch', 'mobility'],
 };
 
+/** 动作库筛选按钮 */
+export const CATEGORIES = ['全部', ...Object.keys(ZH_TAGS)];
+
+/**
+ * 按中文分类筛动作（只看部位/目标肌群，不匹配名称，避免“腿部推举”误进胸）。
+ * @param {any} item
+ * @param {string} category
+ */
+export function matchesCategory(item, category) {
+  if (!category || category === '全部') return true;
+  const terms = ZH_TAGS[category] ?? [];
+  const hay = `${item?.body_part ?? ''} ${item?.target ?? ''}`.toLowerCase();
+  return terms.some((term) => hay.includes(term));
+}
+
 /** @type {any[]|null} */
 let memo = null;
 

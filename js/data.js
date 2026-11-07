@@ -46,24 +46,29 @@ export function weekStart(iso = todayISO()) {
 /** @param {import('./api.js').GitHubApi} api @param {{fresh?: boolean}} [opts] */
 export async function loadAll(api, opts = {}) {
   const files = {
-    config: 'config.json',
-    summary: 'data/summary.json',
-    routine: 'plan/routine.json',
-    reviewIndex: 'review/index.json',
-    daily: 'data/daily.csv',
-    strength: 'data/strength.csv',
-    diet: 'data/diet.csv',
-    checkin: 'data/checkin.csv',
-    body: 'data/body.csv',
-    syncState: 'data/sync_state.json',
+    config: { path: 'config.json', maxAgeMs: 60_000 },
+    summary: { path: 'data/summary.json', maxAgeMs: 30_000 },
+    routine: { path: 'plan/routine.json', maxAgeMs: 60_000 },
+    reviewIndex: { path: 'review/index.json', maxAgeMs: 60_000 },
+    daily: { path: 'data/daily.csv', maxAgeMs: 30_000 },
+    strength: { path: 'data/strength.csv', maxAgeMs: 30_000 },
+    diet: { path: 'data/diet.csv', maxAgeMs: 30_000 },
+    checkin: { path: 'data/checkin.csv', maxAgeMs: 30_000 },
+    body: { path: 'data/body.csv', maxAgeMs: 30_000 },
+    syncState: { path: 'data/sync_state.json', maxAgeMs: 30_000 },
   };
+  /** @type {string[]} */
+  const missing = [];
   const entries = await Promise.all(
-    Object.entries(files).map(async ([key, path]) => {
+    Object.entries(files).map(async ([key, def]) => {
       try {
-        const text = await api.raw(path, opts);
+        const text = await api.raw(def.path, { ...opts, maxAgeMs: def.maxAgeMs });
         return [key, text];
       } catch (error) {
-        if (error instanceof Error && error.name === 'NotFoundError') return [key, null];
+        if (error instanceof Error && error.name === 'NotFoundError') {
+          missing.push(def.path);
+          return [key, null];
+        }
         throw error;
       }
     }),
@@ -71,18 +76,34 @@ export async function loadAll(api, opts = {}) {
   /** @type {Record<string, string|null>} */
   const raw = Object.fromEntries(entries);
 
+  /** @type {string[]} */
+  const corrupt = [];
+  const parse = (key) => {
+    const text = raw[key];
+    if (!text) return null;
+    try { return JSON.parse(text); }
+    catch { corrupt.push(files[key].path); return null; }
+  };
+
   return {
-    config: parseJSON(raw.config),
-    summary: parseJSON(raw.summary),
-    routine: parseJSON(raw.routine),
-    reviewIndex: parseJSON(raw.reviewIndex),
+    config: parse('config'),
+    summary: parse('summary'),
+    routine: parse('routine'),
+    reviewIndex: parse('reviewIndex'),
     daily: parseCSV(raw.daily),
     strength: parseCSV(raw.strength),
     diet: parseCSV(raw.diet),
     checkin: parseCSV(raw.checkin),
     body: parseCSV(raw.body),
-    syncState: parseJSON(raw.syncState),
+    syncState: parse('syncState'),
     loadedAt: new Date().toISOString(),
+    /** 仓库里不存在的可选文件，设置页会汇总提示 */
+    missing,
+    /** 缓存里的 JSON 坏了（解析失败），引导用户清缓存 */
+    corrupt,
+    /** 本次是否有请求因断网回落到缓存 */
+    offline: Boolean(api.lastOffline),
+    offlineAt: api.lastOffline?.at ? new Date(api.lastOffline.at).toISOString() : null,
   };
 }
 
@@ -123,12 +144,6 @@ export function fmtDateTime(iso) {
   }).formatToParts(new Date(at));
   const get = (type) => parts.find((p) => p.type === type)?.value ?? '';
   return `${Number(get('month'))}月${Number(get('day'))}日 ${get('hour')}:${get('minute')}`;
-}
-
-/** @param {string|null} text */
-function parseJSON(text) {
-  if (!text) return null;
-  try { return JSON.parse(text); } catch { return null; }
 }
 
 /** 极简 CSV 解析（支持引号与转义引号） @param {string|null} text */
@@ -226,6 +241,59 @@ export function weekGaps(summary, config) {
 }
 
 function math_round(v) { return Math.round(v * 10) / 10; }
+
+/**
+ * 周目标预测：当前完成量 + 本周剩下的课表，估算最多能到多少。
+ * 简单估算，不判断今天是否已经练完；文案里用「最多」。
+ * @param {any} summary
+ * @param {any} routine
+ * @param {any} config
+ * @param {string} [iso]
+ * @returns {{key:string,label:string,done:number,target:number,remaining:number,
+ *            projected:number,unit:string,reachable:boolean}[]}
+ */
+export function weekForecast(summary, routine, config, iso = todayISO()) {
+  if (!summary) return [];
+  const targets = summary.targets ?? {};
+  const cfg = config?.weekly_targets ?? {};
+  /** @type {string[]} */
+  const dates = [iso];
+  for (let d = addDays(iso, 1); weekday(d) !== 1; d = addDays(d, 1)) dates.push(d);
+  const plans = dates.map((d) => dayFor(routine, d)).filter(Boolean);
+
+  const strengthDays = plans.filter((p) => p.type === 'strength').length;
+  const cardioRemaining = plans.reduce(
+    (sum, p) => sum + (p.type === 'cardio' ? cardioMinutesOf(p) : 0),
+    0,
+  );
+
+  const items = [];
+  const strengthTarget = num(targets.strength_sessions ?? cfg.strength_sessions);
+  if (strengthTarget != null) {
+    const done = num(summary.strength_sessions) ?? 0;
+    items.push({
+      key: 'strength', label: '力量', done, target: strengthTarget,
+      remaining: strengthDays, projected: done + strengthDays, unit: '次',
+      reachable: done + strengthDays >= strengthTarget,
+    });
+  }
+  const cardioTarget = num(targets.cardio_minutes ?? cfg.cardio_minutes);
+  if (cardioTarget != null) {
+    const done = num(summary.cardio_minutes) ?? 0;
+    items.push({
+      key: 'cardio', label: '有氧', done, target: cardioTarget,
+      remaining: cardioRemaining, projected: done + cardioRemaining, unit: '分钟',
+      reachable: done + cardioRemaining >= cardioTarget,
+    });
+  }
+  return items;
+}
+
+/** @param {any} plan */
+function cardioMinutesOf(plan) {
+  const segments = (plan.segments_min ?? []).reduce((a, b) => a + Number(b || 0), 0);
+  return segments || Number(plan.duration_min || 0);
+}
 
 /** @param {any} history @param {string} key */
 export function exerciseHistory(history, key) {

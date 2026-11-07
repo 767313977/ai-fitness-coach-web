@@ -64,7 +64,8 @@ function hub(ctx) {
 /**
  * @param {any} ctx
  * @param {{title: string, workflow: string, fields: any[], hint?: string,
- *          submitLabel?: string, validate?: (v: Record<string,string>) => string|null}} def
+ *          submitLabel?: string, presets?: {label: string, values: Record<string, number>}[],
+ *          validate?: (v: Record<string,string>) => string|null}} def
  */
 function formPage(ctx, def) {
   const wrap = h('div');
@@ -102,7 +103,21 @@ function formPage(ctx, def) {
     ));
   }
 
+  if (Array.isArray(def.presets) && def.presets.length) {
+    form.append(
+      h('div', { class: 'card-title', style: 'margin-top:2px;margin-bottom:8px' }, '快速模板（点一下累加）'),
+      h('div', { class: 'chip-row', style: 'margin-top:0;margin-bottom:14px' },
+        def.presets.map((preset) => h('button', {
+          type: 'button',
+          class: 'chip',
+          onClick: () => applyPreset(inputs, preset),
+        }, preset.label))),
+    );
+  }
+
   const status = h('div', { class: 'hint', style: 'min-height:20px' });
+  const note = h('div', { class: 'hint' });
+  const after = h('div', { class: 'field-row', style: 'margin:8px 0 12px' });
   const submit = h('button', { class: 'btn primary block' }, def.submitLabel ?? '提交');
   submit.addEventListener('click', async () => {
     if (ctx.state.demo) { toast('演示模式不会提交'); return; }
@@ -129,23 +144,45 @@ function formPage(ctx, def) {
         onStatus: (s) => { status.textContent = s; },
       });
       if (position > 0) status.textContent = `排队中（前面还有 ${position} 条）`;
+      note.textContent = '已派发 Actions，预计 30–60 秒生效；完成后会自动刷新。';
       const result = await promise;
       status.textContent = `结果：${describeRun(result)}`;
       if (result.state === 'success') {
-        toast('已写入仓库');
+        note.textContent = 'Actions 已完成；如果页面数字还没变，点「刷新数据」。';
+        toast('已写入仓库，正在刷新');
+        clear(after);
+        after.append(h('button', { class: 'btn small ghost', onClick: () => ctx.refresh() }, '刷新数据'));
         setTimeout(() => ctx.refresh(), 600);
+      } else {
+        note.textContent = '';
       }
     } catch (error) {
       status.textContent = `失败：${error?.message ?? error}`;
+      note.textContent = '';
     } finally {
       submit.disabled = false;
     }
   });
 
-  form.append(status, submit);
+  form.append(status, note, after, submit);
   wrap.append(form);
   if (def.hint) wrap.append(h('div', { class: 'hint' }, def.hint));
   return wrap;
+}
+
+/**
+ * 饮食快速模板：把常见餐次的热量/蛋白累加到当前输入框。
+ * @param {Record<string, HTMLInputElement|HTMLSelectElement>} inputs
+ * @param {{label: string, values: Record<string, number>}} preset
+ */
+function applyPreset(inputs, preset) {
+  for (const [name, amount] of Object.entries(preset.values)) {
+    const el = inputs[name];
+    if (!el) continue;
+    const current = Number(el.value) || 0;
+    el.value = String(Math.round((current + amount) * 10) / 10);
+  }
+  toast(`已累加：${preset.label}`);
 }
 
 function back(ctx, path, label) {
@@ -189,7 +226,13 @@ function dietPage(ctx) {
     title: '记饮食',
     workflow: 'diet.yml',
     submitLabel: '提交饮食',
-    hint: '只抄薄荷「每日饮食汇总页」上的 5 个数，截图数字按 ±10% 误差看趋势。',
+    hint: '只抄薄荷「每日饮食汇总页」上的 5 个数，截图数字按 ±10% 误差看趋势。模板只是把常见餐次累加到当天总数，仍按原流程提交。',
+    presets: [
+      { label: '早餐 +500 kcal / 25 g', values: { kcal: 500, protein: 25 } },
+      { label: '午餐 +750 kcal / 40 g', values: { kcal: 750, protein: 40 } },
+      { label: '晚餐 +700 kcal / 35 g', values: { kcal: 700, protein: 35 } },
+      { label: '加餐 +200 kcal / 10 g', values: { kcal: 200, protein: 10 } },
+    ],
     fields: [
       dateField(),
       { name: 'kcal', label: '全天热量 kcal', type: 'number', numeric: true, placeholder: '2100' },

@@ -4,6 +4,6 @@
   "type": "module",
   "description": "Web 客户端（零依赖、零构建）；这个文件只是让 Node 把 .js 当 ESM，供 node --test 使用。",
   "scripts": {
-    "test": "node --test tests/"
+    "test": "node --test \"tests/*.test.mjs\""
   }
 }

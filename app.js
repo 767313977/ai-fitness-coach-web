@@ -158,6 +158,21 @@ function render() {
         } }, '重发'),
       ));
     }
+    if (state.data?.offline) {
+      content.append(h('div', { class: 'card' },
+        banner(`离线：显示的是 ${cacheTime(state.data.offlineAt)} 的缓存数据，联网后点重试。`, 'warn'),
+        h('button', { class: 'btn small', onClick: () => refresh() }, '重试'),
+      ));
+    }
+    if (state.data?.corrupt?.length) {
+      content.append(h('div', { class: 'card' },
+        banner(`缓存文件损坏：${state.data.corrupt.join('、')}。清缓存后会重新从仓库拉取。`, 'err'),
+        h('button', {
+          class: 'btn small danger',
+          onClick: () => { clearCache(); refresh(); },
+        }, '清缓存并刷新'),
+      ));
+    }
     content.append(pageView());
   }
 
@@ -208,7 +223,8 @@ function sidebar() {
       ),
       h('div', { class: 'tip' }, '快捷键：', h('span', { class: 'kbd' }, 'g'), ' 后接 ',
         h('span', { class: 'kbd' }, 't'), h('span', { class: 'kbd' }, 'w'), h('span', { class: 'kbd' }, 'r'),
-        h('span', { class: 'kbd' }, 'l'), h('span', { class: 'kbd' }, 'c'), h('span', { class: 'kbd' }, 's'), ' 跳转'),
+        h('span', { class: 'kbd' }, 'l'), h('span', { class: 'kbd' }, 'c'), h('span', { class: 'kbd' }, 's'), ' 跳转；',
+        h('span', { class: 'kbd' }, 'r'), ' 刷新；', h('span', { class: 'kbd' }, 'Esc'), ' 关菜单'),
     ),
   );
 }
@@ -402,6 +418,12 @@ function relTime(iso) {
   return `${Math.round(diff / 86_400_000)} 天前`;
 }
 
+/** @param {string|null} iso */
+function cacheTime(iso) {
+  if (!iso) return '上次';
+  return new Date(iso).toLocaleString('zh-CN', { hour12: false });
+}
+
 // 有提交还没完成就关页面，提醒一下
 window.addEventListener('beforeunload', (event) => {
   if (!hasPending()) return;
@@ -418,15 +440,20 @@ window.addEventListener('hashchange', () => {
   window.scrollTo({ top: 0 });
 });
 
-// 键盘快捷键：g 后接 t/w/r/l/c/s
+// 键盘快捷键：g 后接 t/w/r/l/c/s；r 刷新；Esc 关闭「更多」菜单
 let gPressed = false;
 let gTimer = 0;
 window.addEventListener('keydown', (event) => {
   if (event.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return;
   if (event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.key === 'Escape') {
+    if (moreOpen) { moreOpen = false; render(); }
+    return;
+  }
   const map = { t: 'today', w: 'week', r: 'review', l: 'library', c: 'record', s: 'settings' };
   if (event.key === 'g') { gPressed = true; clearTimeout(gTimer); gTimer = setTimeout(() => { gPressed = false; }, 1200); return; }
-  if (gPressed && map[event.key]) { navigate(`/${map[event.key]}`); gPressed = false; }
+  if (gPressed && map[event.key]) { navigate(`/${map[event.key]}`); gPressed = false; return; }
+  if (event.key === 'r') { event.preventDefault(); refresh(); }
 });
 
 function boot() {

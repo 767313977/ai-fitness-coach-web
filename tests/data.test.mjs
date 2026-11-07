@@ -1,0 +1,84 @@
+// @ts-check
+/** 周目标预测与动作分类筛选：node --test web/tests/ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { weekForecast, addDays, weekStart, weekday } from '../js/data.js';
+import { matchesCategory, CATEGORIES } from '../js/dataset.js';
+import { DEMO_DATA } from '../js/demo.js';
+
+const routine = {
+  rotation: {},
+  days: [
+    { weekday: 1, type: 'strength', title: '下肢 A' },
+    { weekday: 2, type: 'rest', title: '休息' },
+    { weekday: 3, type: 'strength', title: '上肢' },
+    { weekday: 4, type: 'rest', title: '休息' },
+    { weekday: 5, type: 'cardio', title: '快走', segments_min: [30, 30] },
+    { weekday: 6, type: 'rest', title: '休息' },
+    { weekday: 7, type: 'rest', title: '休息' },
+  ],
+};
+
+const summary = {
+  strength_sessions: 1,
+  cardio_minutes: 30,
+  targets: { strength_sessions: 3, cardio_minutes: 90, cardio_minutes_max: 150 },
+};
+
+test('周中预测：把剩余课表算进最多能到的量', () => {
+  const items = weekForecast(summary, routine, null, '2026-11-04');
+  const strength = items.find((i) => i.key === 'strength');
+  const cardio = items.find((i) => i.key === 'cardio');
+
+  // 11-04 是周三：只剩周三力量日；周五有氧 60 分钟
+  assert.equal(strength.remaining, 1);
+  assert.equal(strength.projected, 2);
+  assert.equal(strength.reachable, false);
+
+  assert.equal(cardio.remaining, 60);
+  assert.equal(cardio.projected, 90);
+  assert.equal(cardio.reachable, true);
+});
+
+test('周一预测：计划和目标都够', () => {
+  const items = weekForecast(summary, routine, null, '2026-11-02');
+  const strength = items.find((i) => i.key === 'strength');
+  assert.equal(strength.remaining, 2);
+  assert.equal(strength.projected, 3);
+  assert.equal(strength.reachable, true);
+});
+
+test('没有课表时剩余为 0，只按已完成算', () => {
+  const items = weekForecast(summary, null, null, '2026-11-04');
+  assert.equal(items.every((i) => i.remaining === 0), true);
+  assert.equal(items.find((i) => i.key === 'strength').projected, 1);
+});
+
+test('没有 summary 时返回空数组', () => {
+  assert.deepEqual(weekForecast(null, routine, null, '2026-11-04'), []);
+});
+
+test('动作分类筛选只看部位/目标肌群', () => {
+  assert.deepEqual(CATEGORIES.slice(0, 2), ['全部', '胸']);
+  const legs = { body_part: 'upper legs', target: 'quads' };
+  const chest = { body_part: 'chest', target: 'pectorals' };
+  assert.equal(matchesCategory(legs, '腿'), true);
+  assert.equal(matchesCategory(legs, '胸'), false);
+  assert.equal(matchesCategory(chest, '胸'), true);
+  assert.equal(matchesCategory(chest, '全部'), true);
+});
+
+test('日期边界：周日归本周，跨年加天', () => {
+  assert.equal(weekday('2026-11-08'), 7);
+  assert.equal(weekStart('2026-11-08'), '2026-11-02');
+  assert.equal(addDays('2026-12-31', 1), '2027-01-01');
+  assert.equal(weekStart('2027-01-01'), '2026-12-28');
+});
+
+test('演示数据是虚构人物且结构完整', () => {
+  assert.equal(DEMO_DATA.demo, true);
+  assert.equal(DEMO_DATA.config.athlete.name, '演示用户');
+  assert.equal(DEMO_DATA.routine.days.length, 7);
+  assert.ok(DEMO_DATA.summary.body.waist_weekly_8w.length > 0);
+});

@@ -242,7 +242,7 @@ export function heatmap(entries, opts = {}) {
  * 折线图（体重/膝痛这类）。
  * @param {{label: string, value: number|null}[]} points
  * @param {{height?: number, unit?: string, redline?: number|null,
- *          yMin?: number, yMax?: number, yPad?: number}} [opts]
+ *          yMin?: number, yMax?: number, yPad?: number, maxLabels?: number}} [opts]
  */
 export function lineChart(points, opts = {}) {
   const data = points.filter((p) => p.value !== null && Number.isFinite(p.value));
@@ -275,7 +275,18 @@ export function lineChart(points, opts = {}) {
     return `<line class="grid" x1="${padL}" y1="${gy}" x2="${W - padR}" y2="${gy}"/>`;
   }).join('');
   const dots = data.map((p, i) => `<circle class="point" cx="${x(i).toFixed(1)}" cy="${y(Number(p.value)).toFixed(1)}" r="2.6"/>`).join('');
+  // 窄图里标签会挤在一起：最多标 4 个（首尾 + 中间均匀取点）
+  const labelCount = Math.min(opts.maxLabels ?? 4, data.length);
+  const labelIndexes = new Set();
+  if (data.length <= labelCount) {
+    for (let i = 0; i < data.length; i += 1) labelIndexes.add(i);
+  } else {
+    for (let k = 0; k < labelCount; k += 1) {
+      labelIndexes.add(Math.round((k * (data.length - 1)) / (labelCount - 1)));
+    }
+  }
   const labels = data.map((p, i) => {
+    if (!labelIndexes.has(i)) return '';
     const anchor = i === 0 ? 'start' : i === data.length - 1 ? 'end' : 'middle';
     return `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="${anchor}">${escapeHtml(p.label)}</text>`;
   }).join('');

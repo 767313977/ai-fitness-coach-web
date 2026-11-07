@@ -103,6 +103,24 @@ export function renderWeek(ctx) {
   );
   wrap.append(lower);
 
+  const waistRows = s.body?.waist_weekly_8w ?? [];
+  if (waistRows.length) {
+    const latestWaist = num(s.body?.latest_waist?.waist_cm);
+    wrap.append(h('section', { class: 'card' },
+      h('div', { class: 'card-head' },
+        h('div', { class: 'grow' },
+          h('h3', {}, '腰围趋势'),
+          h('div', { class: 'sub' }, '近 8 周 · 每周一次，取最早一条'),
+        ),
+        latestWaist != null ? h('span', { class: 'chip' }, `最近 ${fmtNum(latestWaist)} cm`) : null,
+      ),
+      h('div', { html: lineChart(
+        waistRows.map((w) => ({ label: shortDate(w.week_start), value: num(w.waist_cm) })),
+        { unit: ' cm', height: 140, yPad: 1 },
+      ) }),
+    ));
+  }
+
   wrap.append(h('div', { class: 'grid-2 even' },
     h('section', { class: 'card' },
       h('div', { class: 'card-title' }, '数据来源'),

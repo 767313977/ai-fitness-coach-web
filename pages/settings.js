@@ -2,6 +2,7 @@
 /** 设置：账号、连接测试、数据导出、缓存、演示模式。 */
 import { h, banner, toast } from '../js/ui.js';
 import { clearCache } from '../js/api.js';
+import { hevyMode, hevySyncStatus, fmtDateTime, HEVY_SYNC_STALE_HOURS } from '../js/data.js';
 
 const AUTH_KEY = 'afc.auth.v1';
 const DEMO_KEY = 'afc.demo';
@@ -66,10 +67,11 @@ export function renderSettings(ctx) {
   ));
 
   left.append(exportCard(ctx));
+  left.append(dataStatusCard(ctx));
 
   right.append(h('section', { class: 'card' },
     h('div', { class: 'card-title' }, '本机缓存'),
-    h('div', { class: 'hint', style: 'margin-bottom:10px' }, '网页会缓存读取过的文件（ETag 做 304 校验），缓存损坏时清一下。退出登录会连缓存一起清掉。'),
+    h('div', { class: 'hint', style: 'margin-bottom:10px' }, '网页会缓存读取过的文件（ETag 做 304 校验）。summary / sync_state 只缓存 30 秒，其它数据 60 秒，点「刷新」会强制重新拉取。缓存损坏时清一下。'),
     h('div', { class: 'field-row' },
       h('button', { class: 'btn small', onClick: () => { clearCache(); toast('缓存已清，正在重新拉取'); ctx.refresh(); } }, '清缓存并刷新'),
       h('button', { class: 'btn small danger', onClick: () => {
@@ -108,6 +110,50 @@ export function renderSettings(ctx) {
 
   wrap.append(h('div', { class: 'grid-2' }, left, right));
   return wrap;
+}
+
+/** 数据状态：离线、缺失文件、缓存损坏、Hevy 同步。 */
+function dataStatusCard(ctx) {
+  const d = ctx.data ?? {};
+  const card = h('section', { class: 'card' }, h('div', { class: 'card-title' }, '数据状态'));
+  if (d.offline) {
+    const at = d.offlineAt
+      ? new Date(d.offlineAt).toLocaleString('zh-CN', { hour12: false })
+      : '上次';
+    card.append(banner(`离线：显示的是 ${at} 的缓存数据。`, 'warn'));
+  }
+  const missing = d.missing ?? [];
+  card.append(statusRow(
+    '缺失文件',
+    missing.length ? `${missing.length} 个：${missing.join('、')}` : '无',
+    missing.length ? 'red' : 'lime',
+  ));
+  const corrupt = d.corrupt ?? [];
+  if (corrupt.length) card.append(statusRow('缓存损坏', corrupt.join('、'), 'red'));
+  if (hevyMode(d.config) === 'api') {
+    const sync = hevySyncStatus(d.syncState);
+    const text = sync.unknown
+      ? '还没有同步记录'
+      : `${fmtDateTime(sync.at)} · ${sync.stale ? `超过 ${HEVY_SYNC_STALE_HOURS} 小时` : '正常'}`;
+    card.append(statusRow('Hevy 同步', text, sync.unknown || sync.stale ? 'red' : 'lime'));
+  } else {
+    card.append(statusRow('Hevy 同步', '手动上传 CSV', ''));
+  }
+  card.append(h('div', { class: 'field-row', style: 'margin-top:10px' },
+    h('button', { class: 'btn small', onClick: () => ctx.navigate('/record/import') }, '去导入页'),
+    h('button', { class: 'btn small ghost', onClick: () => { clearCache(); ctx.refresh(); } }, '清缓存并刷新'),
+  ));
+  return card;
+}
+
+/** @param {string} label @param {string} text @param {'red'|'lime'|''} tone */
+function statusRow(label, text, tone) {
+  return h('div', { class: 'row' },
+    h('div', { class: 'grow' },
+      h('div', { class: 'name' }, label),
+      h('div', { class: 'sub', style: 'word-break:break-all' }, text)),
+    tone ? h('span', { class: `chip ${tone}` }, tone === 'red' ? '需处理' : '正常') : null,
+  );
 }
 
 /** 导出当前读到的全部数据为 JSON 文件 */

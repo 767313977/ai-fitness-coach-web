@@ -95,6 +95,8 @@ export class GitHubApi {
   /** @param {ApiConfig} cfg */
   constructor(cfg) {
     this.cfg = { ...cfg, ref: cfg.ref || 'master' };
+    /** 最近一次因网络失败而回落到缓存的时间；loadAll 用它提示「离线」 */
+    this.lastOffline = null;
     ensureLoaded();
   }
 
@@ -109,10 +111,15 @@ export class GitHubApi {
     return `${API_ROOT}/repos/${encodeURIComponent(this.cfg.owner)}/${encodeURIComponent(this.cfg.repo)}/contents/${encoded}?ref=${encodeURIComponent(this.cfg.ref)}`;
   }
 
-  /** @param {string} path @param {{fresh?: boolean}} [opts] */
+  /** @param {string} path @param {{fresh?: boolean, maxAgeMs?: number}} [opts] */
   async raw(path, opts = {}) {
     const key = this.cacheKey(path);
     const cached = memoryCache.get(key);
+    // 短有效期：summary / sync_state 这类频繁变化的文件在 TTL 内直接用内存缓存，不打网络。
+    // 「刷新」按钮会传 fresh:true，绕过 TTL。
+    if (!opts.fresh && cached && opts.maxAgeMs && Date.now() - cached.at < opts.maxAgeMs) {
+      return cached.text;
+    }
     /** @type {Record<string,string>} */
     const headers = {
       Accept: 'application/vnd.github.raw+json',
@@ -125,7 +132,10 @@ export class GitHubApi {
     try {
       res = await fetch(this.urlFor(path), { headers, cache: 'no-cache' });
     } catch (error) {
-      if (cached) return cached.text; // 离线时用缓存兜底
+      if (cached) {
+        this.lastOffline = { path, at: cached.at };
+        return cached.text; // 离线时用缓存兜底
+      }
       throw new ApiError('网络不通，检查一下网络连接', 0);
     }
 

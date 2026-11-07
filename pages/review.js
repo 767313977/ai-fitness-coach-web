@@ -1,6 +1,6 @@
 // @ts-check
 /** 复盘：列表 + 单篇 Markdown 阅读。 */
-import { h, banner, markdown, clear } from '../js/ui.js';
+import { h, banner, markdown, clear, toast } from '../js/ui.js';
 import { fmtDate } from '../js/data.js';
 
 /** @param {any} ctx */
@@ -69,7 +69,13 @@ export function renderReviewDetail(ctx, file) {
         body.append(banner(`仓库里找不到 review/${file}`, 'err'));
         return;
       }
-      body.append(h('div', { class: 'md', html: markdown(text) }));
+      body.append(
+        h('div', { class: 'field-row', style: 'margin-bottom:12px;max-width:320px' },
+          h('button', { class: 'btn small', onClick: () => copyReview(text) }, '复制全文'),
+          h('button', { class: 'btn small ghost', onClick: () => window.print() }, '打印 / 存 PDF'),
+        ),
+        h('div', { class: 'md', html: markdown(text) }),
+      );
     } catch (error) {
       clear(body);
       body.append(banner(`读取失败：${error?.message ?? error}`, 'err'));
@@ -77,6 +83,24 @@ export function renderReviewDetail(ctx, file) {
   })();
 
   return wrap;
+}
+
+/** 复制复盘全文；剪贴板 API 不可用时退回 textarea。 @param {string} text */
+async function copyReview(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('已复制全文');
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    const done = document.execCommand('copy');
+    area.remove();
+    toast(done ? '已复制全文' : '复制失败，请手动选择');
+  }
 }
 
 function weekLabel(iso) {

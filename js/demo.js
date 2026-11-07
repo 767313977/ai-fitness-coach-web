@@ -126,7 +126,17 @@ export const DEMO_DATA = {
       { date: dayInWeek(4), knee_pain: 1 },
     ].filter((d) => d.date),
     cardio_manual_14d: [{ date: dayInWeek(3), minutes: 30, segments: [30], type: 'walk' }].filter((d) => d.date),
-    body: { latest_waist_cm: 78.0, waist_weeks: [] },
+    body: {
+      // 虚构腰围趋势，仅用于演示图表
+      latest_waist: { date: addDays(TODAY, -3), waist_cm: 78.0 },
+      waist_weekly_8w: [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        week_start: weekOf(i - 7),
+        waist_cm: Number((80 - i * 0.25).toFixed(1)),
+      })),
+      latest_composition: { date: addDays(TODAY, -10), body_fat_pct: 20.0, skeletal_muscle_kg: 30.0 },
+      latest_waist_cm: 78.0,
+      waist_weeks: [],
+    },
     cycle_baseline: { weight_kg: 70.0, body_fat_pct: 20.0, skeletal_muscle_kg: 30.0, waist_cm: 78.0 },
     strength_last_date: addDays(TODAY, -1),
     exercise_history: {

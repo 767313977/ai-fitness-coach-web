@@ -1,6 +1,6 @@
 ﻿// @ts-check
 /** Service Worker：只缓存应用外壳，数据永远走网络（git 仓库里的健康数据不进 SW 缓存）。 */
-const CACHE = 'afc-shell-v7';
+const CACHE = 'afc-shell-v8';
 const ILLUSTRATION_INDEX = './data/illustrations/index.json';
 const SHELL = [
   './',
@@ -17,6 +17,7 @@ const SHELL = [
   './js/submit.js',
   './js/queue.js',
   './js/dataset.js',
+  './js/illustrations.js',
   './pages/today.js',
   './pages/week.js',
   './pages/review.js',
@@ -74,10 +75,26 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        // 只缓存成功的响应，避免把 404/500 固化进离线包
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        }
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('./index.html'))),
+      .catch(async () => {
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        // 只在页面导航时回退到外壳；JS/CSS 缺失时明确失败，避免把 HTML 当模块执行
+        if (event.request.mode === 'navigate') {
+          const shell = await caches.match('./index.html');
+          if (shell) return shell;
+        }
+        return new Response('离线且没有缓存', {
+          status: 504,
+          statusText: 'Offline',
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
+      }),
   );
 });

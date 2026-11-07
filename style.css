@@ -362,6 +362,25 @@ p { margin: 0; }
 .tip { font-size: 12px; color: var(--text-3); }
 .kbd { display: inline-block; min-width: 18px; padding: 1px 5px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--surface-2); font-size: 11px; text-align: center; }
 
+/* ---------- 课表勾选 / 移动端卡片 ---------- */
+.ex-check, .check-cell input { width: 16px; height: 16px; accent-color: var(--lime); cursor: pointer; }
+.check-cell { padding-right: 0 !important; }
+.strength-table tr.done td { opacity: .55; }
+.strength-table tr.done td:nth-child(3) .name { text-decoration: line-through; }
+.only-mobile { display: none; }
+.ex-cards { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 14px; }
+.ex-card { border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); padding: 12px; }
+.ex-card.done { opacity: .55; }
+.ex-card-head { display: flex; align-items: center; gap: 10px; }
+.ex-card-head .grow { flex: 1; min-width: 0; }
+.ex-card-head .n { font-weight: 600; font-size: 14px; }
+.ex-card-head .sub { color: var(--text-3); font-size: 12px; margin-top: 2px; }
+.ex-card-head .ex-check { margin-left: auto; }
+.ex-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--text-2); }
+.ex-meta .muted { color: var(--text-3); }
+button.chip { cursor: pointer; }
+button.chip:hover { border-color: var(--line-strong); }
+
 /* ---------- 窄屏 ---------- */
 @media (max-width: 920px) {
   .shell { display: block; }
@@ -378,4 +397,18 @@ p { margin: 0; }
   .table { font-size: 12.5px; }
   .table th, .table td { padding: 8px 6px; }
   .bottom-nav { display: flex; }
+  .only-desktop { display: none !important; }
+  .only-mobile { display: block; }
+  .ex-cards.only-mobile { display: flex; }
+}
+
+/* ---------- 打印 / 存 PDF ---------- */
+@media print {
+  body { background: #fff; color: #111; }
+  .sidebar, .topbar, .bottom-nav, .toast, .more-sheet, .detail-panel { display: none !important; }
+  .shell, .content { display: block; padding: 0; max-width: none; }
+  .card { background: #fff; border-color: #ddd; box-shadow: none; }
+  .md, .md h1, .md h2, .md h3, .md h4, .md strong { color: #111; }
+  .md th, .md td { border-color: #ccc; }
+  a { color: #111; }
 }

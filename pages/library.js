@@ -7,6 +7,7 @@ import { loadIllustrationIndex, findIllustration } from '../js/illustrations.js'
 import {
   loadExercises, matchPlan, searchExercises, stepsFor,
   loadIndex, loadBodyPart, bodyPartSlug, searchFull,
+  CATEGORIES, matchesCategory,
 } from '../js/dataset.js';
 
 const STEP_LANG_KEY = 'afc.steps.lang';
@@ -16,6 +17,8 @@ let stepLang = (() => {
 })();
 
 let query = '';
+let category = '全部';
+let sortRecent = false;
 /** @type {any} */
 let selected = null; // { item, ex? }
 let fullMode = sessionStorage.getItem('afc.library.full') === '1';
@@ -42,6 +45,7 @@ export function renderLibrary(ctx) {
   const listBox = h('div');
   const planBox = h('div');
   const statusBox = h('div');
+  const filterBox = h('div');
 
   const toggle = h('input', { type: 'checkbox', id: 'full-lib', checked: fullMode });
   const toggleLabel = h('label', { for: 'full-lib', class: 'row', style: 'border:0;padding:10px 0 0;gap:8px;cursor:pointer' },
@@ -53,6 +57,7 @@ export function renderLibrary(ctx) {
     h('div', { class: 'card-title' }, '动作库'),
     search,
     h('div', { class: 'hint' }, '按中文名、英文名、肌群、器械或分类（胸/背/腿/肩/手臂/核心/有氧/拉伸）搜索。'),
+    filterBox,
     toggleLabel,
     statusBox,
   ));
@@ -79,6 +84,37 @@ export function renderLibrary(ctx) {
   let planEntries = [];
 
   const entryFor = (ex) => planMap.get(ex.key) ?? null;
+
+  // 动作名 → 最近一次训练日期；用于「按最近训练排序」和历史提示。
+  /** @type {Map<string, string>} */
+  const lastTrained = new Map();
+  for (const row of ctx.data.strength ?? []) {
+    if (!row?.exercise || !row?.date) continue;
+    const current = lastTrained.get(row.exercise);
+    if (!current || row.date > current) lastTrained.set(row.exercise, row.date);
+  }
+  const lastDateFor = (item) => lastTrained.get(item?.zh) ?? lastTrained.get(item?.name) ?? '';
+  const sortByRecent = (list) => sortRecent
+    ? list.slice().sort((a, b) => lastDateFor(b).localeCompare(lastDateFor(a)))
+    : list;
+
+  function renderFilters() {
+    clear(filterBox);
+    filterBox.append(
+      h('div', { class: 'chip-row', style: 'margin-top:10px;margin-bottom:0' },
+        CATEGORIES.map((cat) => h('button', {
+          class: `chip ${category === cat ? 'lime' : ''}`,
+          onClick: () => { category = cat; renderFilters(); renderList(); },
+        }, cat))),
+      h('div', { class: 'chip-row', style: 'margin-top:8px' },
+        h('button', {
+          class: `chip ${sortRecent ? 'lime' : ''}`,
+          onClick: () => { sortRecent = !sortRecent; renderFilters(); renderList(); },
+        }, '按最近训练排序')),
+    );
+  }
+
+  renderFilters();
 
   async function ensureIndex() {
     if (fullIndex || fullLoading) return;
@@ -138,10 +174,24 @@ export function renderLibrary(ctx) {
 
   function renderList() {
     clear(planBox);
-    if (planEntries.length) {
-      const rows = planEntries.map((ex) => {
+    const visiblePlan = planEntries.filter((ex) => {
+      if (category === '全部') return true;
+      const item = entryFor(ex);
+      return item ? matchesCategory(item, category) : false;
+    });
+    if (sortRecent) {
+      visiblePlan.sort((a, b) => (lastTrained.get(b.name) ?? '').localeCompare(lastTrained.get(a.name) ?? ''));
+    }
+
+    if (visiblePlan.length) {
+      const rows = visiblePlan.map((ex) => {
         const item = entryFor(ex);
         const on = selected?.ex?.key === ex.key;
+        const hist = ctx.data.summary?.exercise_history?.[ex.key];
+        const lastText = hist
+          ? `上次 ${hist.weight_kg ? `${fmtNum(hist.weight_kg)} kg×${fmtNum(hist.reps)}` : `${fmtNum(hist.reps)} 次`}`
+            + (hist.next_hint ? ` → ${hist.next_hint}` : '')
+          : '';
         return h('div', {
           class: `lib-item${on ? ' on' : ''}`,
           onClick: () => select(item, ex),
@@ -150,10 +200,11 @@ export function renderLibrary(ctx) {
           h('div', { class: 't' }, [ex.weight_kg ? `${fmtNum(ex.weight_kg)} kg` : '自重',
             ex.rep_min != null ? `${ex.sets}×${ex.rep_min}–${ex.rep_max}` : '',
             item ? '有动作说明' : '无动作说明'].filter(Boolean).join(' · ')),
+          lastText ? h('div', { class: 't' }, lastText) : null,
         );
       });
       planBox.append(h('section', { class: 'card tight' },
-        h('div', { class: 'card-title' }, '本计划的动作'),
+        h('div', { class: 'card-title' }, category === '全部' ? '本计划的动作' : `本计划 · ${category}`),
         h('div', { class: 'lib-grid' }, rows),
       ));
     }
@@ -161,12 +212,15 @@ export function renderLibrary(ctx) {
     clear(listBox);
     if (!dataset.length) return;
 
-    const curated = searchExercises(dataset, query, 60);
+    const curated = searchExercises(dataset, query, 60)
+      .filter((item) => matchesCategory(item, category))
+      .map((item) => ({ ...item, curated: true }));
     /** @type {any[]} */
-    let results = curated.map((item) => ({ ...item, curated: true }));
+    let results = curated;
     if (fullMode && fullIndex) {
       const seen = new Set(results.map((item) => item.name.toLowerCase()));
       for (const item of searchFull(fullIndex, query, 80)) {
+        if (!matchesCategory(item, category)) continue;
         const key = String(item.name).toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
@@ -174,10 +228,12 @@ export function renderLibrary(ctx) {
       }
       results = results.slice(0, 100);
     }
+    results = sortByRecent(results);
 
+    const scope = category === '全部' ? '' : ` · ${category}`;
     listBox.append(h('section', { class: 'card tight' },
       h('div', { class: 'card-title' },
-        query ? `搜索结果 ${results.length}` : (fullMode ? `精选 + 完整库（前 ${results.length}）` : `全部动作（${dataset.length}）`)),
+        query ? `搜索结果 ${results.length}${scope}` : (fullMode ? `精选 + 完整库（前 ${results.length}）${scope}` : `全部动作（${results.length}）${scope}`)),
       results.length
         ? h('div', { class: 'lib-grid' }, results.map((item) => {
             const on = selected?.item?.id === item.id && !selected?.ex;
@@ -187,13 +243,12 @@ export function renderLibrary(ctx) {
             },
               h('div', { class: 'n' }, item.zh ?? item.name),
               h('div', { class: 't en' }, `${item.name} · ${item.equipment}`),
-              // 精选条目不算机翻；完整库里 zh_auto 缺省为 true，手写条目是 false
               !item.curated && item.zh_auto !== false
                 ? h('span', { class: 'tag', style: 'margin-top:6px' }, '机翻')
                 : null,
             );
           }))
-        : h('div', { class: 'empty' }, '没有匹配的动作，换个关键词'),
+        : h('div', { class: 'empty' }, '没有匹配的动作，换个关键词或分类'),
     ));
   }
 
@@ -250,6 +305,12 @@ export function renderLibrary(ctx) {
     ) : null;
     drawSteps(stepLang);
 
+    const hist = ex ? ctx.data.summary?.exercise_history?.[ex.key] : null;
+    const histText = hist
+      ? `上次 ${hist.weight_kg ? `${fmtNum(hist.weight_kg)} kg×${fmtNum(hist.reps)}` : `${fmtNum(hist.reps)} 次`}`
+        + (hist.next_hint ? ` → 建议 ${hist.next_hint}` : '')
+      : '';
+
     right.append(h('section', { class: 'card' },
       h('div', { class: 'card-title' }, ex ? '本计划动作' : '动作库'),
       h('h2', { style: 'font-size:20px;margin-bottom:2px' }, ex?.name ?? item.zh ?? item.name),
@@ -267,6 +328,7 @@ export function renderLibrary(ctx) {
           ex.rpe_cap != null ? ` · RPE ≤ ${ex.rpe_cap}` : '',
           ex.cue ? ` · 要点：${ex.cue}` : ''),
       ) : null,
+      histText ? h('div', { class: 'hint', style: 'margin-top:8px' }, histText) : null,
       langRow,
       stepsBox,
       h('p', { class: 'hint', style: 'margin-top:14px' },
