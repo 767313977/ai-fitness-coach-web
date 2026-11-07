@@ -44,7 +44,7 @@ export function renderSettings(ctx) {
         h('div', { class: 'name' }, `${auth.owner}/${auth.repo}`),
         h('div', { class: 'sub' }, `PAT ${maskToken(auth.token)} · ${auth.remember ? '已记住' : '仅本次会话'}`),
       ),
-      h('a', { class: 'chip ice', href: `https://github.com/${auth.owner}/${auth.repo}`, target: '_blank', rel: 'noopener' }, '打开仓库'),
+      h('a', { class: 'chip ice', href: `https://github.com/${auth.owner}/${auth.repo}`, target: '_blank', rel: 'noopener noreferrer' }, '打开仓库'),
     ),
   ));
 
@@ -56,7 +56,7 @@ export function renderSettings(ctx) {
         testStatus.textContent = '测试中…';
         try {
           const info = await state.api.test();
-          testStatus.textContent = `连接正常 · 体重 ${info.athlete ?? '—'} kg · summary ${info.summaryAt ?? '缺失'}`;
+          testStatus.textContent = `连接正常 · 私有仓库 · 工作流 ${info.workflowCount} 个 · summary ${info.summaryAt ?? '缺失'}`;
         } catch (error) {
           testStatus.textContent = `失败：${error?.message ?? error}`;
         }
@@ -199,7 +199,7 @@ function aboutCard() {
       h('br'),
       '动作库数据 © hasaneyldrm/exercises-dataset（MIT），不含 Gym visual 的图片/GIF。动作插图 © Bryl Lim / Everkinetic，CC BY-SA 4.0。',
       h('br'),
-      '版本 web-0.2.0 · 契约见仓库 docs/数据契约.md'),
+      '版本 web-0.3.0 · 契约见仓库 docs/数据契约.md'),
   );
 }
 

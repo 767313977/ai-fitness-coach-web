@@ -1,31 +1,129 @@
 // @ts-check
-/** 提交一次写入：派发工作流 → 找到运行 → 轮询结果；以及 Hevy CSV 上传。 */
+/** 提交一次写入：派发工作流 → 找到运行 → 轮询结果；以及 Hevy CSV 上传。
+ *
+ * 状态口径（队列持久化依赖它）：
+ * - success / failure / cancelled：Actions 运行已结束，任务可以移除；
+ * - timeout：运行还没结束（或轮询超时），任务必须保留；
+ * - unknown：已派发但暂时找不到运行记录，任务必须保留，稍后再查。
+ */
 import { newRequestId, sleep } from './api.js';
-import { enqueueJob } from './queue.js';
+
+export const RUN_STATE = {
+  success: 'success',
+  failure: 'failure',
+  cancelled: 'cancelled',
+  timeout: 'timeout',
+  unknown: 'unknown',
+};
+
+/** @param {string|undefined|null} conclusion */
+export function classifyConclusion(conclusion) {
+  if (conclusion === 'success') return RUN_STATE.success;
+  if (conclusion === 'cancelled') return RUN_STATE.cancelled;
+  if (['failure', 'timed_out', 'action_required', 'startup_failure', 'stale'].includes(String(conclusion))) {
+    return RUN_STATE.failure;
+  }
+  return RUN_STATE.unknown;
+}
+
+/** 只有真正拿到结束状态才算终态。 @param {string} state */
+export function isTerminalState(state) {
+  return state === RUN_STATE.success || state === RUN_STATE.failure || state === RUN_STATE.cancelled;
+}
 
 /**
+ * 等待已有运行结束；超时返回 timeout，任务由队列保留。
  * @param {import('./api.js').GitHubApi} api
- * @param {{workflow: string, inputs: Record<string,string>, requestId?: string, onStatus?: (s: string, detail?: any) => void}} opts
+ * @param {any} run
+ * @param {{requestId?: string, timeoutMs?: number, pollMs?: number,
+ *          onStatus?: (s: string, detail?: any) => void}} [opts]
+ */
+export async function waitForRun(api, run, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 6 * 60_000;
+  const pollMs = opts.pollMs ?? 5_000;
+  let current = run;
+  const started = Date.now();
+  while (current.status !== 'completed') {
+    if (Date.now() - started >= timeoutMs) {
+      opts.onStatus?.('仍在运行', current);
+      return { id: opts.requestId, state: RUN_STATE.timeout, run: current };
+    }
+    opts.onStatus?.('运行中', current);
+    await sleep(pollMs);
+    try {
+      current = await api.runStatus(current.id);
+    } catch (error) {
+      // 网络抖动不判定失败：继续等，超时后由队列保留任务
+      opts.onStatus?.('网络中断，继续等待', current);
+    }
+  }
+  opts.onStatus?.('已完成', current);
+  return { id: opts.requestId, state: classifyConclusion(current.conclusion), run: current };
+}
+
+/**
+ * 派发或恢复一次工作流。
+ * 先按 request_id 查已有运行，查到就不重复派发（多标签/刷新/网络重试都走这里）。
+ * @param {import('./api.js').GitHubApi} api
+ * @param {{workflow: string, inputs: Record<string,string>, requestId?: string,
+ *          onStatus?: (s: string, detail?: any) => void,
+ *          findTimeoutMs?: number, runTimeoutMs?: number, pollMs?: number}} opts
  */
 export async function runWorkflow(api, opts) {
   const id = opts.requestId || newRequestId();
   const status = opts.onStatus || (() => {});
-  status('派发中');
-  await api.dispatch(opts.workflow, { ...opts.inputs, request_id: id });
 
-  status('等待 GitHub 接单');
-  const run = await api.findRun(id, { timeoutMs: 80_000 });
-  if (!run) return { id, state: 'unknown', run: null };
+  status('核对是否已派发');
+  let run = await api.findRunOnce(id).catch(() => null);
 
-  let current = run;
-  const started = Date.now();
-  while (current.status !== 'completed' && Date.now() - started < 6 * 60_000) {
-    status('运行中', current);
-    await sleep(5_000);
-    current = await api.runStatus(current.id);
+  if (!run) {
+    try {
+      status('派发中');
+      await api.dispatch(opts.workflow, { ...opts.inputs, request_id: id });
+    } catch (error) {
+      // 网络异常：先按 request_id 再查一次，可能已经派发成功但响应丢了
+      status('派发结果未知，正在核对…');
+      run = await api.findRunOnce(id).catch(() => null);
+      if (!run) throw error;
+    }
   }
-  status(current.status === 'completed' ? '已完成' : '超时', current);
-  return { id, state: current.conclusion || current.status, run: current };
+
+  if (!run) {
+    status('等待 GitHub 接单');
+    run = await api.findRun(id, {
+      timeoutMs: opts.findTimeoutMs ?? 80_000,
+      intervalMs: opts.pollMs ?? 4_000,
+    });
+  }
+  if (!run) return { id, state: RUN_STATE.unknown, run: null };
+
+  return waitForRun(api, run, {
+    requestId: id,
+    onStatus: status,
+    timeoutMs: opts.runTimeoutMs,
+    pollMs: opts.pollMs,
+  });
+}
+
+/**
+ * 刷新/重开后按 request_id 恢复：不派发新任务，只查已有运行。
+ * @param {import('./api.js').GitHubApi} api
+ * @param {{requestId: string, onStatus?: (s: string, detail?: any) => void,
+ *          runTimeoutMs?: number, pollMs?: number}} opts
+ */
+export async function resumeWorkflow(api, opts) {
+  opts.onStatus?.('查找已有运行');
+  const run = await api.findRunOnce(opts.requestId).catch(() => null);
+  if (!run) return { id: opts.requestId, state: RUN_STATE.unknown, run: null };
+  if (run.status === 'completed') {
+    return { id: opts.requestId, state: classifyConclusion(run.conclusion), run };
+  }
+  return waitForRun(api, run, {
+    requestId: opts.requestId,
+    onStatus: opts.onStatus,
+    timeoutMs: opts.runTimeoutMs,
+    pollMs: opts.pollMs,
+  });
 }
 
 /** @param {File} file */
@@ -40,68 +138,21 @@ export async function fileToBase64(file) {
   return btoa(binary);
 }
 
-/**
- * 上传 Hevy CSV 到 uploads/hevy/，再派发导入。
- * 排进全局队列，避免和打卡/饮食同时触发把排队任务顶掉。
- * @param {import('./api.js').GitHubApi} api
- * @param {File} file
- * @param {(s: string) => void} onStatus
- * @param {() => void} [onStart]
- */
-export function importHevy(api, file, onStatus, onStart) {
-  const id = newRequestId();
-  const { position, promise } = enqueueJob(async () => {
-    onStart?.();
-    onStatus(position ? `排队中（前面还有 ${position} 条）` : '上传 CSV');
-    // 文件名统一小写 .csv，工作流路径校验是 ^uploads/hevy/[^/]+\.csv$
-    const base = file.name.replace(/[^\w.\-]+/g, '_');
-    const safeName = base.replace(/\.csv$/i, '') + '.csv';
-    const path = `uploads/hevy/${id}-${safeName}`;
-    const base64 = await fileToBase64(file);
-    await api.putFile(path, base64, `upload: hevy [${id}]`);
-    onStatus('已上传，派发导入');
-    let result = await runWorkflow(api, {
-      workflow: 'import_hevy_csv.yml',
-      inputs: { path },
-      requestId: id,
-      onStatus,
-    });
-    if (result.state === 'cancelled') {
-      onStatus('被排队取消，用同一个 request_id 重试一次…');
-      result = await runWorkflow(api, {
-        workflow: 'import_hevy_csv.yml',
-        inputs: { path },
-        requestId: id,
-        onStatus,
-      });
-    }
-    return result;
-  });
-  return { position, promise };
-}
-
-/**
- * API 模式下手动触发一次云端同步。
- * Hevy 的 api-key 存在 Actions Secret 里，浏览器只负责派发工作流，不碰密钥。
- * @param {import('./api.js').GitHubApi} api
- * @param {(s: string) => void} onStatus
- * @param {() => void} [onStart]
- */
-export function syncHevy(api, onStatus, onStart) {
-  const { position, promise } = enqueueJob(async () => {
-    onStart?.();
-    onStatus(position ? `排队中（前面还有 ${position} 条）` : '派发同步');
-    return runWorkflow(api, { workflow: 'hevy_sync.yml', inputs: {}, onStatus });
-  });
-  return { position, promise };
-}
-
 /** 运行结果 → 人能看懂的一句话 */
 export function describeRun(result) {
   if (!result) return '没有拿到结果';
-  if (result.state === 'success') return '已写入';
-  if (result.state === 'unknown') return '派发了，但没等到运行记录（去 Actions 页面确认一下，别重复提交）';
-  if (result.state === 'failure') return '失败：去 Actions 看日志';
-  if (result.state === 'cancelled') return '被取消了（已用同一 request_id 重试过一次）';
-  return result.state;
+  switch (result.state) {
+    case RUN_STATE.success:
+      return '已写入';
+    case RUN_STATE.failure:
+      return '失败：去 Actions 看日志';
+    case RUN_STATE.cancelled:
+      return '已取消（工作流没有写入成功）';
+    case RUN_STATE.timeout:
+      return '仍在运行（超过等待时间），任务已保留，稍后点「继续检查」';
+    case RUN_STATE.unknown:
+      return '已派发但暂未找到运行记录，任务已保留，稍后点「继续检查」';
+    default:
+      return String(result.state);
+  }
 }

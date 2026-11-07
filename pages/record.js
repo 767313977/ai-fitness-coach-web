@@ -5,8 +5,9 @@
  */
 import { h, banner, clear, toast, icon } from '../js/ui.js';
 import { todayISO, hevyMode, hevySyncStatus, fmtDateTime, HEVY_SYNC_STALE_HOURS } from '../js/data.js';
-import { importHevy, syncHevy, describeRun } from '../js/submit.js';
-import { enqueue } from '../js/queue.js';
+import { describeRun } from '../js/submit.js';
+import { enqueue, enqueueHevyImport, resumeTaskById } from '../js/queue.js';
+import { dateRule, intRule, numberRule, validateValues } from '../js/validate.js';
 
 /** @param {any} ctx @param {string[]} rest */
 export function renderRecord(ctx, rest = []) {
@@ -63,7 +64,7 @@ function hub(ctx) {
 
 /**
  * @param {any} ctx
- * @param {{title: string, workflow: string, fields: any[], hint?: string,
+ * @param {{title: string, workflow: string, kind?: string, fields: any[], hint?: string,
  *          submitLabel?: string, presets?: {label: string, values: Record<string, number>}[],
  *          validate?: (v: Record<string,string>) => string|null}} def
  */
@@ -74,31 +75,32 @@ function formPage(ctx, def) {
 
   /** @type {Record<string, HTMLInputElement|HTMLSelectElement>} */
   const inputs = {};
-  const form = h('div', { class: 'card' });
+  const form = h('form', { class: 'card' });
 
   for (const field of def.fields) {
+    const required = !field.optional;
+    let el;
+    if (field.type === 'select') {
+      el = h('select', { class: 'input', required },
+        (field.options ?? []).map((o) => h('option', { value: o.value }, o.label)));
+      el.value = field.value ?? field.options?.[0]?.value ?? '';
+    } else {
+      el = h('input', {
+        class: 'input',
+        type: field.type ?? 'text',
+        placeholder: field.placeholder ?? '',
+        value: field.value ?? '',
+        max: field.max ?? null,
+        min: field.min ?? null,
+        step: field.step ?? (field.type === 'number' ? (field.integer ? '1' : 'any') : null),
+        required,
+        inputmode: field.numeric ? 'decimal' : null,
+      });
+    }
+    inputs[field.name] = el;
     form.append(h('div', { class: 'field' },
       h('label', {}, field.label, field.optional ? h('span', { style: 'color:var(--text-3)' }, '（可选）') : null),
-      field.type === 'select'
-        ? (() => {
-            const el = h('select', { class: 'input' }, (field.options ?? []).map((o) => h('option', { value: o.value }, o.label)));
-            el.value = field.value ?? field.options?.[0]?.value ?? '';
-            inputs[field.name] = el;
-            return el;
-          })()
-        : (() => {
-            const el = h('input', {
-              class: 'input',
-              type: field.type ?? 'text',
-              placeholder: field.placeholder ?? '',
-              value: field.value ?? '',
-              max: field.max ?? null,
-              min: field.min ?? null,
-              inputmode: field.numeric ? 'decimal' : null,
-            });
-            inputs[field.name] = el;
-            return el;
-          })(),
+      el,
       field.hint ? h('div', { class: 'hint' }, field.hint) : null,
     ));
   }
@@ -117,10 +119,17 @@ function formPage(ctx, def) {
 
   const status = h('div', { class: 'hint', style: 'min-height:20px' });
   const note = h('div', { class: 'hint' });
-  const after = h('div', { class: 'field-row', style: 'margin:8px 0 12px' });
-  const submit = h('button', { class: 'btn primary block' }, def.submitLabel ?? '提交');
-  submit.addEventListener('click', async () => {
-    if (ctx.state.demo) { toast('演示模式不会提交'); return; }
+  const after = h('div', { class: 'field-row', style: 'margin:8px 0 12px;flex-wrap:wrap' });
+  // 用户重新输入时清掉上一次的错误提示
+  for (const el of Object.values(inputs)) {
+    el.addEventListener('input', () => { status.textContent = ''; });
+    el.addEventListener('change', () => { status.textContent = ''; });
+  }
+  const submit = h('button', { class: 'btn primary block', type: 'submit' }, def.submitLabel ?? '提交');
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
     const values = {};
     for (const [name, el] of Object.entries(inputs)) {
       const value = String(el.value ?? '').trim();
@@ -131,31 +140,36 @@ function formPage(ctx, def) {
       status.textContent = `还缺：${missing.map((f) => f.label).join('、')}`;
       return;
     }
-    if (typeof def.validate === 'function') {
-      const problem = def.validate(values);
-      if (problem) { status.textContent = problem; return; }
+    // 浏览器约束校验（min/max/step/required）与统一数值校验一起执行
+    if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+      if (typeof form.reportValidity === 'function') form.reportValidity();
+      status.textContent = '有字段不符合要求，按输入框提示修改';
+      return;
     }
+    const problem = validateValues(def.fields, values)
+      || (typeof def.validate === 'function' ? def.validate(values) : null);
+    if (problem) { status.textContent = problem; return; }
+
+    if (ctx.state.demo) { toast('演示模式不会提交'); return; }
+
     submit.disabled = true;
     status.textContent = '提交中…';
+    clear(after);
     try {
-      const { position, promise } = enqueue(ctx.api, {
+      const queued = enqueue(ctx.api, {
         workflow: def.workflow,
         inputs: values,
+        kind: def.kind ?? 'workflow',
         onStatus: (s) => { status.textContent = s; },
       });
-      if (position > 0) status.textContent = `排队中（前面还有 ${position} 条）`;
+      if (queued.position > 0) status.textContent = `排队中（前面还有 ${queued.position} 条）`;
       note.textContent = '已派发 Actions，预计 30–60 秒生效；完成后会自动刷新。';
-      const result = await promise;
-      status.textContent = `结果：${describeRun(result)}`;
-      if (result.state === 'success') {
-        note.textContent = 'Actions 已完成；如果页面数字还没变，点「刷新数据」。';
-        toast('已写入仓库，正在刷新');
-        clear(after);
-        after.append(h('button', { class: 'btn small ghost', onClick: () => ctx.refresh() }, '刷新数据'));
-        setTimeout(() => ctx.refresh(), 600);
-      } else {
-        note.textContent = '';
-      }
+      const result = await queued.promise;
+      showResult({
+        result, status, note, after, ctx,
+        taskId: queued.task.id,
+        onStatus: (s) => { status.textContent = s; },
+      });
     } catch (error) {
       status.textContent = `失败：${error?.message ?? error}`;
       note.textContent = '';
@@ -168,6 +182,53 @@ function formPage(ctx, def) {
   wrap.append(form);
   if (def.hint) wrap.append(h('div', { class: 'hint' }, def.hint));
   return wrap;
+}
+
+/**
+ * 统一渲染运行结果：成功/失败/取消为终态；超时/未知保留任务并给「继续检查」。
+ * @param {{result: any, status: HTMLElement, note: HTMLElement, after: HTMLElement,
+ *          ctx: any, taskId: string, onStatus: (s: string) => void}} args
+ */
+function showResult({ result, status, note, after, ctx, taskId, onStatus }) {
+  status.textContent = `结果：${describeRun(result)}`;
+  clear(after);
+
+  if (result.run?.html_url) {
+    after.append(h('a', {
+      class: 'btn small ghost',
+      href: result.run.html_url,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+    }, '查看运行'));
+  }
+
+  if (result.state === 'success') {
+    note.textContent = 'Actions 已完成；如果页面数字还没变，点「刷新数据」。';
+    toast('已写入仓库，正在刷新');
+    after.append(h('button', { class: 'btn small ghost', onClick: () => ctx.refresh() }, '刷新数据'));
+    setTimeout(() => ctx.refresh(), 600);
+    return;
+  }
+  if (result.state === 'failure' || result.state === 'cancelled') {
+    note.textContent = result.state === 'cancelled'
+      ? '工作流被取消，没有写入；可以重新提交。'
+      : '去 Actions 看日志；工作流有 request_id 幂等闸，重试不会重复写入。';
+    return;
+  }
+  note.textContent = result.needsFile
+    ? '需要重新选择 CSV 文件后再导入；已上传的记录不会重复写入。'
+    : '任务已保留，刷新或断网都不会丢；稍后点「继续检查」。';
+  after.append(h('button', {
+    class: 'btn small',
+    onClick: async () => {
+      try {
+        const resumed = await resumeTaskById(ctx.api, taskId, { onStatus });
+        showResult({ result: resumed, status, note, after, ctx, taskId, onStatus });
+      } catch (error) {
+        status.textContent = `检查失败：${error?.message ?? error}`;
+      }
+    },
+  }, '继续检查'));
 }
 
 /**
@@ -190,7 +251,10 @@ function back(ctx, path, label) {
 }
 
 function dateField() {
-  return { name: 'date', label: '日期', type: 'date', value: todayISO(), max: todayISO() };
+  return {
+    name: 'date', label: '日期', type: 'date', value: todayISO(), max: todayISO(),
+    rule: dateRule(),
+  };
 }
 
 // ---------------- 各表单 ----------------
@@ -213,9 +277,9 @@ function checkinPage(ctx) {
     },
     fields: [
       dateField(),
-      { name: 'knee_pain', label: '膝痛（0–10）', type: 'number', numeric: true, min: 0, max: 10, placeholder: '2', hint: '平时 1–2 分；4 分以上当天停下肢动作。' },
-      { name: 'energy', label: '精力（1–5）', type: 'number', numeric: true, min: 1, max: 5, placeholder: '4' },
-      { name: 'sleep_feel', label: '睡眠感受（1–5）', type: 'number', numeric: true, min: 1, max: 5, placeholder: '4' },
+      { name: 'knee_pain', label: '膝痛（0–10）', type: 'number', numeric: true, integer: true, min: 0, max: 10, rule: intRule(0, 10), placeholder: '2', hint: '平时 1–2 分；4 分以上当天停下肢动作。' },
+      { name: 'energy', label: '精力（1–5）', type: 'number', numeric: true, integer: true, min: 1, max: 5, rule: intRule(1, 5), placeholder: '4' },
+      { name: 'sleep_feel', label: '睡眠感受（1–5）', type: 'number', numeric: true, integer: true, min: 1, max: 5, rule: intRule(1, 5), placeholder: '4' },
       { name: 'note', label: '备注', optional: true },
     ],
   });
@@ -235,11 +299,11 @@ function dietPage(ctx) {
     ],
     fields: [
       dateField(),
-      { name: 'kcal', label: '全天热量 kcal', type: 'number', numeric: true, placeholder: '2100' },
-      { name: 'protein', label: '蛋白 g', type: 'number', numeric: true, placeholder: '120' },
-      { name: 'carbs', label: '碳水 g', optional: true, type: 'number', numeric: true },
-      { name: 'fat', label: '脂肪 g', optional: true, type: 'number', numeric: true },
-      { name: 'weight', label: '晨起体重 kg', optional: true, type: 'number', numeric: true, placeholder: '70.0' },
+      { name: 'kcal', label: '全天热量 kcal', type: 'number', numeric: true, rule: numberRule({ min: 0, exclusiveMin: true, max: 8000 }), placeholder: '2100' },
+      { name: 'protein', label: '蛋白 g', type: 'number', numeric: true, rule: numberRule({ min: 0, max: 500 }), placeholder: '120' },
+      { name: 'carbs', label: '碳水 g', optional: true, type: 'number', numeric: true, rule: numberRule({ min: 0, max: 1200 }) },
+      { name: 'fat', label: '脂肪 g', optional: true, type: 'number', numeric: true, rule: numberRule({ min: 0, max: 500 }) },
+      { name: 'weight', label: '晨起体重 kg', optional: true, type: 'number', numeric: true, rule: numberRule({ min: 25, max: 300 }), placeholder: '70.0' },
       { name: 'note', label: '备注', optional: true },
     ],
   });
@@ -253,29 +317,25 @@ function cardioPage(ctx) {
     hint: '分段写法：30,30。单次不超过 30 分钟。',
     validate: (v) => {
       if (!v.segments && !v.minutes) return '分段分钟和单段分钟至少填一个';
-      const parts = [];
       if (v.segments) {
         for (const piece of String(v.segments).split(',')) {
           const n = Number(piece.trim());
-          if (!Number.isFinite(n) || n <= 0) return '分段要写成 30,30 这种正整数';
-          parts.push(n);
+          if (!Number.isInteger(n) || n < 1 || n > 30) return '分段要写成 1–30 的整数，例如 30,30';
         }
-      } else if (v.minutes) {
+      } else {
         const n = Number(v.minutes);
-        if (!Number.isFinite(n) || n <= 0) return '分钟数要是正整数';
-        parts.push(n);
+        if (!Number.isInteger(n) || n < 1 || n > 30) return '单段分钟是 1–30 的整数';
       }
-      if (parts.some((n) => n > 30)) return '单段不超过 30 分钟';
       return null;
     },
     fields: [
       dateField(),
-      { name: 'segments', label: '分段分钟', optional: true, placeholder: '例：30,30' },
-      { name: 'minutes', label: '或单段分钟数', optional: true, type: 'number', numeric: true, placeholder: '例：30' },
+      { name: 'segments', label: '分段分钟', optional: true, placeholder: '例：30,30', hint: '每段 1–30 的整数，逗号分隔' },
+      { name: 'minutes', label: '或单段分钟数', optional: true, type: 'number', numeric: true, integer: true, min: 1, max: 30, rule: intRule(1, 30), placeholder: '例：30' },
       { name: 'type', label: '方式', type: 'select', options: [
         { value: '快走', label: '快走' }, { value: '骑车', label: '骑车' }, { value: '其他', label: '其他' },
       ] },
-      { name: 'distance_km', label: '距离 km', optional: true, type: 'number', numeric: true },
+      { name: 'distance_km', label: '距离 km', optional: true, type: 'number', numeric: true, rule: numberRule({ min: 0 }) },
       { name: 'note', label: '备注', optional: true },
     ],
   });
@@ -289,10 +349,10 @@ function bodyPage(ctx) {
     hint: '同一天同一来源后一次覆盖前一次；体重请记在饮食里。',
     fields: [
       dateField(),
-      { name: 'waist_cm', label: '腰围 cm', optional: true, type: 'number', numeric: true },
-      { name: 'body_fat_pct', label: '体脂率 %', optional: true, type: 'number', numeric: true },
-      { name: 'skeletal_muscle_kg', label: '骨骼肌 kg', optional: true, type: 'number', numeric: true },
-      { name: 'source', label: '来源', type: 'select', options: [
+      { name: 'waist_cm', label: '腰围 cm', optional: true, type: 'number', numeric: true, rule: numberRule({ min: 50, max: 150 }) },
+      { name: 'body_fat_pct', label: '体脂率 %', optional: true, type: 'number', numeric: true, rule: numberRule({ min: 3, max: 60 }) },
+      { name: 'skeletal_muscle_kg', label: '骨骼肌 kg', optional: true, type: 'number', numeric: true, rule: numberRule({ min: 10, max: 80 }) },
+      { name: 'source', label: '来源', optional: true, type: 'select', options: [
         { value: '', label: '按内容自动判断' }, { value: 'tape', label: 'tape（自己量）' }, { value: 'bca', label: 'bca（体成分仪）' },
       ] },
       { name: 'note', label: '备注', optional: true },
@@ -313,24 +373,29 @@ function csvImportCard(ctx) {
   const card = h('div');
   const fileInput = h('input', { class: 'input', type: 'file', accept: '.csv,text/csv' });
   const status = h('div', { class: 'hint', style: 'min-height:20px' });
+  const note = h('div', { class: 'hint' });
+  const after = h('div', { class: 'field-row', style: 'margin:8px 0;flex-wrap:wrap' });
   const btn = h('button', { class: 'btn primary block' }, '上传并导入');
 
   btn.addEventListener('click', async () => {
     if (ctx.state.demo) { toast('演示模式不会提交'); return; }
     const file = fileInput.files?.[0];
-    if (!file) { status.textContent = '先选一个 Hevy 导出的 CSV'; return; }
+    if (!file) { status.textContent = '先选一个 Hevy 导出的 CSV，再点上传'; return; }
     btn.disabled = true;
+    clear(after);
     try {
-      const { position, promise } = importHevy(ctx.api, file, (s) => { status.textContent = s; });
-      if (position > 0) status.textContent = `排队中（前面还有 ${position} 条）`;
-      const result = await promise;
-      status.textContent = `结果：${describeRun(result)}`;
-      if (result.state === 'success') {
-        toast('导入完成');
-        setTimeout(() => ctx.refresh(), 600);
-      }
+      const queued = enqueueHevyImport(ctx.api, file, (s) => { status.textContent = s; });
+      if (queued.position > 0) status.textContent = `排队中（前面还有 ${queued.position} 条）`;
+      note.textContent = 'CSV 只上传到仓库的 uploads/ 临时目录，导入后由 Actions 删除；文件内容不会进浏览器存储。';
+      const result = await queued.promise;
+      showResult({
+        result, status, note, after, ctx,
+        taskId: queued.task.id,
+        onStatus: (s) => { status.textContent = s; },
+      });
     } catch (error) {
       status.textContent = `失败：${error?.message ?? error}`;
+      note.textContent = '上传阶段失败时，请重新选择 CSV 文件再试。';
     } finally {
       btn.disabled = false;
     }
@@ -342,6 +407,8 @@ function csvImportCard(ctx) {
       'Hevy → Profile → Settings → Export & Import Data → Export Workouts。上传需要 PAT 有 Contents 读写权限；Actions 导入后会删除临时文件。'),
     fileInput,
     status,
+    note,
+    after,
     btn,
   ));
   return card;
@@ -357,22 +424,32 @@ function apiSyncCard(ctx) {
     : h('span', { class: `chip ${info.stale ? 'red' : 'lime'}` }, info.stale ? '同步超时' : '正常');
 
   const status = h('div', { class: 'hint', style: 'min-height:20px' });
+  const note = h('div', { class: 'hint' });
+  const after = h('div', { class: 'field-row', style: 'margin:8px 0;flex-wrap:wrap' });
   const btn = h('button', { class: 'btn primary block' }, '立即同步');
 
   btn.addEventListener('click', async () => {
     if (ctx.state.demo) { toast('演示模式不会提交'); return; }
     btn.disabled = true;
+    clear(after);
     try {
-      const { position, promise } = syncHevy(ctx.api, (s) => { status.textContent = s; });
-      if (position > 0) status.textContent = `排队中（前面还有 ${position} 条）`;
-      const result = await promise;
-      status.textContent = `结果：${describeRun(result)}`;
-      if (result.state === 'success') {
-        toast('同步完成');
-        setTimeout(() => ctx.refresh(), 600);
-      }
+      const queued = enqueue(ctx.api, {
+        workflow: 'hevy_sync.yml',
+        inputs: {},
+        kind: 'hevy-sync',
+        onStatus: (s) => { status.textContent = s; },
+      });
+      if (queued.position > 0) status.textContent = `排队中（前面还有 ${queued.position} 条）`;
+      note.textContent = '已派发 Actions，预计 30–60 秒生效；完成后会自动刷新。';
+      const result = await queued.promise;
+      showResult({
+        result, status, note, after, ctx,
+        taskId: queued.task.id,
+        onStatus: (s) => { status.textContent = s; },
+      });
     } catch (error) {
       status.textContent = `失败：${error?.message ?? error}`;
+      note.textContent = '';
     } finally {
       btn.disabled = false;
     }
@@ -410,6 +487,8 @@ function apiSyncCard(ctx) {
       '同步只替换带 workout_id 的行，手动补录（source=manual）不会被改动；Hevy 的 api-key 只存在 Actions Secret 里，不会进浏览器。'),
     btn,
     status,
+    note,
+    after,
   );
 }
 
@@ -425,27 +504,33 @@ function weeklyPage(ctx) {
   wrap.append(back(ctx, '/record', '记录'));
   wrap.append(h('h2', { style: 'margin:6px 0 12px' }, '生成周复盘'));
   const status = h('div', { class: 'hint', style: 'min-height:20px' });
+  const note = h('div', { class: 'hint' });
+  const after = h('div', { class: 'field-row', style: 'margin:8px 0;flex-wrap:wrap' });
   const btn = h('button', { class: 'btn primary block' }, '立即生成（消耗一次 Actions）');
 
   btn.addEventListener('click', async () => {
     if (ctx.state.demo) { toast('演示模式不会提交'); return; }
     btn.disabled = true;
     status.textContent = '提交中…';
+    clear(after);
     try {
-      const { position, promise } = enqueue(ctx.api, {
+      const queued = enqueue(ctx.api, {
         workflow: 'weekly.yml',
         inputs: {},
+        kind: 'weekly',
         onStatus: (s) => { status.textContent = s; },
       });
-      if (position > 0) status.textContent = `排队中（前面还有 ${position} 条）`;
-      const result = await promise;
-      status.textContent = `结果：${describeRun(result)}`;
-      if (result.state === 'success') {
-        toast('复盘已生成');
-        setTimeout(() => ctx.refresh(), 800);
-      }
+      if (queued.position > 0) status.textContent = `排队中（前面还有 ${queued.position} 条）`;
+      note.textContent = '已派发 Actions，预计 30–60 秒生效；完成后会自动刷新。';
+      const result = await queued.promise;
+      showResult({
+        result, status, note, after, ctx,
+        taskId: queued.task.id,
+        onStatus: (s) => { status.textContent = s; },
+      });
     } catch (error) {
       status.textContent = `失败：${error?.message ?? error}`;
+      note.textContent = '';
     } finally {
       btn.disabled = false;
     }
@@ -455,6 +540,8 @@ function weeklyPage(ctx) {
     h('div', { class: 'hint', style: 'margin-bottom:12px' },
       '会生成 review/week-*.md 的第 1–4 节，并让 AI 写 5.1–5.4 与下周提案。周日 21:17 会自动跑一次。'),
     status,
+    note,
+    after,
     btn,
   ));
   return wrap;

@@ -1,6 +1,14 @@
-﻿// @ts-check
-/** Service Worker：只缓存应用外壳，数据永远走网络（git 仓库里的健康数据不进 SW 缓存）。 */
-const CACHE = 'afc-shell-v8';
+// @ts-check
+/** Service Worker：只缓存应用外壳，数据永远走网络（git 仓库里的健康数据不进 SW 缓存）。
+ *
+ * Cache Storage 按源站共享（github.io 下所有项目共用），因此：
+ * - 所有缓存统一用 afc-web: 前缀；
+ * - 升级时只删本项目旧版本，绝不 caches.keys() 全删；
+ * - 离线回退只查本项目缓存，不做全局 caches.match。
+ */
+import { CACHE_NAME, shouldDeleteCache } from './js/cache_policy.js';
+
+const CACHE = CACHE_NAME;
 const ILLUSTRATION_INDEX = './data/illustrations/index.json';
 const SHELL = [
   './',
@@ -18,6 +26,8 @@ const SHELL = [
   './js/queue.js',
   './js/dataset.js',
   './js/illustrations.js',
+  './js/validate.js',
+  './js/cache_policy.js',
   './pages/today.js',
   './pages/week.js',
   './pages/review.js',
@@ -61,7 +71,8 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      // 只清理本项目旧版本；同域其他 GitHub Pages 项目的缓存不能碰
+      .then((keys) => Promise.all(keys.filter((k) => shouldDeleteCache(k, CACHE)).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -73,7 +84,7 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-cache' })
       .then((response) => {
         // 只缓存成功的响应，避免把 404/500 固化进离线包
         if (response.ok) {
@@ -83,11 +94,12 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(async () => {
-        const cached = await caches.match(event.request);
+        const cache = await caches.open(CACHE);
+        const cached = await cache.match(event.request);
         if (cached) return cached;
         // 只在页面导航时回退到外壳；JS/CSS 缺失时明确失败，避免把 HTML 当模块执行
         if (event.request.mode === 'navigate') {
-          const shell = await caches.match('./index.html');
+          const shell = await cache.match('./index.html');
           if (shell) return shell;
         }
         return new Response('离线且没有缓存', {

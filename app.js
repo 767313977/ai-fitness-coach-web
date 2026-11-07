@@ -1,10 +1,10 @@
 // @ts-check
 /** 应用外壳：登录、路由、数据加载、侧边栏。 */
-import { ApiError, GitHubApi, clearCache, setCachePersistence } from './js/api.js';
+import { ApiError, GitHubApi, PublicRepoError, clearCache, setCachePersistence } from './js/api.js';
 import { loadAll, todayISO, fmtDate } from './js/data.js';
 import { h, clear, icon, toast, banner } from './js/ui.js';
 import { DEMO_DATA } from './js/demo.js';
-import { hasPending, resendUnsent, unsentCount } from './js/queue.js';
+import { hasPending, hevyRecoveryTasks, resumeUnfinished, unsentCount } from './js/queue.js';
 import { renderToday } from './pages/today.js';
 import { renderWeek } from './pages/week.js';
 import { renderReviewList, renderReviewDetail } from './pages/review.js';
@@ -101,7 +101,17 @@ async function connect(opts = {}) {
       state.data = DEMO_DATA;
     } else {
       state.api = new GitHubApi({ ...state.auth, ref: 'master' });
-      state.data = await loadAll(state.api, { fresh: Boolean(opts.fresh) });
+      // 每次连接都复核 private；断网时忽略这项检查，保留离线缓存能力
+      const privacy = state.api.repoMeta().catch((error) => {
+        if (error instanceof PublicRepoError) throw error;
+        return null;
+      });
+      const [meta, data] = await Promise.all([
+        privacy,
+        loadAll(state.api, { fresh: Boolean(opts.fresh) }),
+      ]);
+      if (meta && meta.private !== true) throw new PublicRepoError();
+      state.data = data;
     }
   } catch (error) {
     state.error = /** @type {Error} */ (error);
@@ -147,15 +157,30 @@ function render() {
     content.append(renderError(state.error));
   } else {
     const unsent = unsentCount();
-    if (unsent > 0) {
+    const hevyPending = hevyRecoveryTasks();
+    if (unsent > 0 || hevyPending.length > 0) {
       content.append(h('div', { class: 'card' },
-        banner(`上次有 ${unsent} 条没发出去（刷新或关页面时队列还没跑完）。`, 'warn'),
+        banner(`有 ${unsent} 条提交还没确认结果（刷新、断网或超时都不会丢）。`, 'warn'),
+        hevyPending.length
+          ? h('div', { class: 'hint' },
+            `${hevyPending.length} 条 Hevy 导入已经上传过 CSV，不用重新选文件。`)
+          : null,
         h('button', { class: 'btn small', onClick: async () => {
-          const results = await resendUnsent(state.api);
-          const failed = results.filter((item) => item.error || item.result?.state !== 'success');
-          toast(failed.length ? `重发完成，${failed.length} 条仍需重试` : '已重新发出');
+          if (!state.api) return;
+          const results = await resumeUnfinished(state.api, { onStatus: (s) => toast(s) });
+          const unresolved = results.filter(
+            (item) => item.error || !['success', 'failure', 'cancelled'].includes(item.result?.state),
+          );
+          const needsFile = results.filter((item) => item.result?.needsFile).length;
+          toast(needsFile
+            ? `已检查；${needsFile} 条需要重新选择 CSV 文件`
+            : unresolved.length
+              ? `已检查，${unresolved.length} 条还没结束，稍后再试`
+              : '已确认完成');
           refresh();
-        } }, '重发'),
+        } }, '继续检查'),
+        h('div', { class: 'hint', style: 'margin-top:8px' },
+          '恢复时沿用原 request_id，不会重复写入；超时/未知的任务不会自动丢弃。'),
       ));
     }
     if (state.data?.offline) {
@@ -239,7 +264,7 @@ function repoCard() {
   const auth = state.auth;
   if (!auth) return h('div');
   return h('div', { class: 'repo-card' },
-    h('a', { class: 'r', href: `https://github.com/${auth.owner}/${auth.repo}`, target: '_blank', rel: 'noopener' },
+    h('a', { class: 'r', href: `https://github.com/${auth.owner}/${auth.repo}`, target: '_blank', rel: 'noopener noreferrer' },
       `${auth.owner}/${auth.repo}`),
     h('div', { class: 's' }, auth.remember ? '已记住 PAT' : '本次会话有效'),
   );
@@ -335,10 +360,12 @@ function loginView() {
       return;
     }
     connectBtn.disabled = true;
-    connectBtn.textContent = '连接中…';
+    connectBtn.textContent = '验证仓库…';
     try {
       const api = new GitHubApi({ ...auth, ref: 'master' });
-      await api.test();
+      // 必须确认是私有仓库，否则不保存 PAT（健康数据不能进公开仓库）
+      const report = await api.verifyRepo();
+      if (!report.private) throw new Error('这个仓库不是私有仓库');
       state.auth = auth;
       state.demo = false;
       sessionStorage.removeItem(DEMO_KEY);
@@ -346,6 +373,7 @@ function loginView() {
       setCachePersistence(auth.remember);
       await connect();
       navigate('/today');
+      toast('已验证私有仓库并连接成功');
     } catch (error) {
       clear(errorBox);
       errorBox.append(banner(errorText(error), 'err'));
@@ -366,6 +394,7 @@ function loginView() {
         h('div', { class: 'field' },
           h('label', { for: 'token' }, 'Fine-grained PAT'), token,
           h('div', { class: 'hint' }, '权限：Contents 读写（导入 Hevy 要用）+ Actions 读写；范围只授权这一个仓库。'),
+          h('div', { class: 'hint' }, '连接时会强制检查仓库必须是 Private，并验证 Contents / Actions 读取权限；验证失败不会保存 PAT。'),
           h('div', { class: 'hint' }, '建议把 PAT 的过期时间设在 90 天以内。'),
         ),
         h('label', { class: 'row', style: 'border:0;padding:0 0 12px' },
@@ -476,7 +505,15 @@ boot();
 if ('serviceWorker' in navigator
     && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => { /* 忽略 */ });
+    // 已有旧 SW 时，新版本接管后自动刷新一次，避免旧缓存里的模块和新模块混用
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return;
+      reloading = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register('./sw.js', { type: 'module', updateViaCache: 'none' }).catch(() => { /* 忽略 */ });
   });
 }
 

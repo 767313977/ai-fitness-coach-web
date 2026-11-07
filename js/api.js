@@ -30,6 +30,14 @@ export class NotFoundError extends ApiError {
   constructor(message) { super(message, 404); this.name = 'NotFoundError'; }
 }
 
+/** 目标仓库是公开的：拒绝连接，避免健康数据被公开索引。 */
+export class PublicRepoError extends ApiError {
+  constructor() {
+    super('这个仓库是公开的。健康数据只能放在私有仓库，请先在 GitHub 把仓库改成 Private，再回来连接。', 403);
+    this.name = 'PublicRepoError';
+  }
+}
+
 /** @type {Map<string, {etag: string|null, text: string, at: number}>} */
 let memoryCache = new Map();
 
@@ -176,17 +184,80 @@ export class GitHubApi {
     catch (e) { if (e instanceof NotFoundError) return null; throw e; }
   }
 
+  /** 读取仓库元数据：private 与当前账号的写权限。 */
+  async repoMeta() {
+    const url = `${API_ROOT}/repos/${encodeURIComponent(this.cfg.owner)}/${encodeURIComponent(this.cfg.repo)}`;
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${this.cfg.token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (res.status === 401) throw new ApiError('PAT 无效或已过期，重新填一个', 401);
+    if (res.status === 404) {
+      throw new ApiError('仓库不存在，或 PAT 没有这个私有仓库的访问权限（fine-grained PAT 要选中该仓库）', 404);
+    }
+    if (res.status === 403) throw new ApiError('PAT 没有读取仓库信息的权限（或 API 限流）', 403);
+    if (!res.ok) throw new ApiError(`读取仓库信息失败：GitHub 返回 ${res.status}`, res.status);
+    const data = await res.json();
+    return {
+      private: data?.private === true,
+      fullName: typeof data?.full_name === 'string' ? data.full_name : `${this.cfg.owner}/${this.cfg.repo}`,
+      canPush: data?.permissions?.push !== false,
+    };
+  }
+
   /** 测试连接：读 config.json，返回仓库信息 */
   async test() {
-    const [cfg, summary] = await Promise.all([
-      this.json('config.json', { fresh: true }),
-      this.jsonOptional('data/summary.json', { fresh: true }),
-    ]);
+    const meta = await this.verifyRepo();
     return {
+      private: meta.private,
+      workflowCount: meta.workflowCount,
+      athlete: meta.athlete,
+      weekly: null,
+      summaryAt: meta.summaryAt,
+    };
+  }
+
+  /**
+   * 登录前的完整验证：必须私有、Contents 可读、Actions 可读。
+   * Actions 写权限无法在不派发工作流的前提下验证，首次提交时再由 403 提示。
+   */
+  async verifyRepo() {
+    const meta = await this.repoMeta();
+    if (!meta.private) throw new PublicRepoError();
+    if (!meta.canPush) {
+      throw new ApiError('当前 GitHub 账号对这个仓库没有写权限；请用管理员或已授权的账号。', 403);
+    }
+    const cfg = await this.json('config.json', { fresh: true });
+    const workflowCount = await this.countWorkflows();
+    const summary = await this.jsonOptional('data/summary.json', { fresh: true });
+    return {
+      private: true,
+      fullName: meta.fullName,
+      workflowCount,
       athlete: cfg?.athlete?.weight_kg ?? null,
-      weekly: cfg?.weekly_targets ?? null,
       summaryAt: summary?.generated_at ?? null,
     };
+  }
+
+  /** Actions 读权限：列出工作流；403 单独提示。 */
+  async countWorkflows() {
+    const url = `${API_ROOT}/repos/${encodeURIComponent(this.cfg.owner)}/${encodeURIComponent(this.cfg.repo)}/actions/workflows?per_page=1`;
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${this.cfg.token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (res.status === 401) throw new ApiError('PAT 无效或已过期，重新填一个', 401);
+    if (res.status === 404) throw new ApiError('PAT 没有这个仓库的访问权限', 404);
+    if (res.status === 403) throw new ApiError('PAT 缺少 Actions 读取权限', 403);
+    if (!res.ok) throw new ApiError(`Actions 接口返回 ${res.status}`, res.status);
+    const data = await res.json();
+    return (data?.total_count ?? 0);
   }
 
   /**
@@ -220,6 +291,16 @@ export class GitHubApi {
   }
 
   /**
+   * 按 request_id 查一次最近的运行；用于刷新后恢复、避免重复派发。
+   * @param {string} requestId
+   */
+  async findRunOnce(requestId) {
+    const data = await this.actionsGet('actions/runs?event=workflow_dispatch&per_page=100');
+    const runs = data?.workflow_runs ?? [];
+    return runs.find((r) => String(r.display_title || r.name || '').includes(requestId)) ?? null;
+  }
+
+  /**
    * 找到本次 request_id 对应的运行。
    * @param {string} requestId
    * @param {{timeoutMs?: number, intervalMs?: number}} [opts]
@@ -229,9 +310,7 @@ export class GitHubApi {
     const intervalMs = opts.intervalMs ?? 4_000;
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
-      const data = await this.actionsGet('actions/runs?event=workflow_dispatch&per_page=30');
-      const runs = data?.workflow_runs ?? [];
-      const hit = runs.find((r) => String(r.display_title || r.name || '').includes(requestId));
+      const hit = await this.findRunOnce(requestId);
       if (hit) return hit;
       await sleep(intervalMs);
     }
