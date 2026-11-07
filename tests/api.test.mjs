@@ -115,6 +115,7 @@ test('403 二级限流：不误报成 PAT 权限不足', async () => {
     api.raw('config.json'),
     (error) => error instanceof ApiError
       && /二级限流/.test(error.message)
+      && error.rateLimited === true
       && !/读取权限/.test(error.message),
   );
 });
@@ -127,7 +128,9 @@ test('403 主限流：剩余次数为 0 时提示限流', async () => {
   const api = new GitHubApi({ owner: 'owner', repo: 'primary-limit', token: 'dummy', ref: 'master' });
   await assert.rejects(
     api.raw('config.json'),
-    (error) => error instanceof ApiError && /限流/.test(error.message),
+    (error) => error instanceof ApiError
+      && /每小时 5000 次/
+      && error.rateLimited === true,
   );
 });
 
@@ -140,6 +143,46 @@ test('403 普通权限不足：仍提示 PAT 读取权限', async () => {
   await assert.rejects(
     api.raw('config.json'),
     (error) => error instanceof ApiError && /读取权限/.test(error.message),
+  );
+});
+
+test('403 只带 Retry-After 不算二级限流（避免误报）', async () => {
+  globalThis.fetch = async () => new Response('{"message":"Resource not accessible by personal access token"}', {
+    status: 403,
+    headers: { 'Retry-After': '60', 'X-RateLimit-Remaining': '4999' },
+  });
+  const api = new GitHubApi({ owner: 'owner', repo: 'retry-after-only', token: 'dummy', ref: 'master' });
+  await assert.rejects(
+    api.raw('config.json'),
+    (error) => error instanceof ApiError
+      && !/二级限流/.test(error.message)
+      && /读取权限/.test(error.message)
+      && error.rateLimited === false,
+  );
+});
+
+test('403 主限流即使带 Retry-After 也不误报成二级限流', async () => {
+  globalThis.fetch = async () => new Response('{"message":"API rate limit exceeded for user ID 1"}', {
+    status: 403,
+    headers: { 'Retry-After': '60', 'X-RateLimit-Remaining': '0' },
+  });
+  const api = new GitHubApi({ owner: 'owner', repo: 'primary-with-retry', token: 'dummy', ref: 'master' });
+  await assert.rejects(
+    api.raw('config.json'),
+    (error) => error instanceof ApiError
+      && /每小时 5000 次/
+      && !/二级限流/.test(error.message),
+  );
+});
+
+test('429 也统一提示限流，而不是「GitHub 返回 429」', async () => {
+  globalThis.fetch = async () => new Response('{"message":"Too Many Requests"}', { status: 429 });
+  const api = new GitHubApi({ owner: 'owner', repo: 'too-many', token: 'dummy', ref: 'master' });
+  await assert.rejects(
+    api.raw('config.json'),
+    (error) => error instanceof ApiError
+      && /限流/.test(error.message)
+      && error.rateLimited === true,
   );
 });
 
