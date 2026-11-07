@@ -336,6 +336,102 @@ test('pickBranch：所有候选分支都没有 config 时报分支错误', async
   );
 });
 
+test('putFile：只有 404 按新文件处理，403/429/500 都中止', async () => {
+  const scenarios = [
+    { meta: () => json({ message: 'Not Found' }, 404), shouldPut: true },
+    { meta: () => json({ message: 'Forbidden' }, 403), shouldPut: false },
+    { meta: () => json({ message: 'Too Many Requests' }, 429), shouldPut: false },
+    { meta: () => json({ message: 'boom' }, 500), shouldPut: false },
+  ];
+  for (const item of scenarios) {
+    let put = false;
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      if (u.endsWith('/repos/owner/put-repo')) return json({ private: true });
+      if (init.method === 'PUT') { put = true; return json({ content: { sha: 'x' } }); }
+      if (u.includes('/contents/uploads/')) return item.meta();
+      throw new Error(`不应访问：${u}`);
+    };
+    const api = new GitHubApi({ owner: 'owner', repo: 'put-repo', token: 'dummy', ref: 'main' });
+    if (item.shouldPut) {
+      await api.putFile('uploads/hevy/a.csv', 'AA==', 'upload');
+      assert.equal(put, true);
+    } else {
+      await assert.rejects(api.putFile('uploads/hevy/a.csv', 'AA==', 'upload'));
+      assert.equal(put, false);
+    }
+  }
+});
+
+test('putFile：查询 SHA 时网络异常中止，不发 PUT', async () => {
+  let put = false;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/repos/owner/put-net')) return json({ private: true });
+    if (init.method === 'PUT') { put = true; return json({}); }
+    if (u.includes('/contents/uploads/')) throw new TypeError('fetch failed');
+    throw new Error(`不应访问：${u}`);
+  };
+  const api = new GitHubApi({ owner: 'owner', repo: 'put-net', token: 'dummy', ref: 'main' });
+  await assert.rejects(api.putFile('uploads/hevy/a.csv', 'AA==', 'upload'), /fetch failed/);
+  assert.equal(put, false);
+});
+
+test('putFile：已存在文件必须带上 sha', async () => {
+  let body = null;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/repos/owner/put-sha')) return json({ private: true });
+    if (init.method === 'PUT') { body = JSON.parse(String(init.body)); return json({}); }
+    if (u.includes('/contents/uploads/')) return json({ sha: 'abc123' });
+    throw new Error(`不应访问：${u}`);
+  };
+  const api = new GitHubApi({ owner: 'owner', repo: 'put-sha', token: 'dummy', ref: 'main' });
+  await api.putFile('uploads/hevy/a.csv', 'AA==', 'upload');
+  assert.equal(body.sha, 'abc123');
+});
+
+test('deleteFile：成功删除带 sha，文件不存在视为成功，403 报错', async () => {
+  let deleted = false;
+  let body = null;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/repos/owner/del-repo')) return json({ private: true });
+    if (init.method === 'DELETE') { deleted = true; body = JSON.parse(String(init.body)); return json({}); }
+    if (u.includes('/contents/uploads/')) return json({ sha: 'sha1' });
+    throw new Error(`不应访问：${u}`);
+  };
+  await new GitHubApi({ owner: 'owner', repo: 'del-repo', token: 'dummy', ref: 'main' })
+    .deleteFile('uploads/hevy/a.csv', 'cleanup');
+  assert.equal(deleted, true);
+  assert.equal(body.sha, 'sha1');
+
+  deleted = false;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/repos/owner/del-missing')) return json({ private: true });
+    if (init.method === 'DELETE') { deleted = true; return json({}); }
+    if (u.includes('/contents/uploads/')) return json({ message: 'Not Found' }, 404);
+    throw new Error(`不应访问：${u}`);
+  };
+  await new GitHubApi({ owner: 'owner', repo: 'del-missing', token: 'dummy', ref: 'main' })
+    .deleteFile('uploads/hevy/a.csv', 'cleanup');
+  assert.equal(deleted, false);
+
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/repos/owner/del-403')) return json({ private: true });
+    if (init.method === 'DELETE') return json({ message: 'Forbidden' }, 403);
+    if (u.includes('/contents/uploads/')) return json({ sha: 'sha1' });
+    throw new Error(`不应访问：${u}`);
+  };
+  await assert.rejects(
+    new GitHubApi({ owner: 'owner', repo: 'del-403', token: 'dummy', ref: 'main' })
+      .deleteFile('uploads/hevy/a.csv', 'cleanup'),
+    /Contents/,
+  );
+});
+
 test('缓存键按账户、仓库、分支隔离', () => {
   const a = new GitHubApi({ owner: 'a', repo: 'r', token: 't', ref: 'main' });
   const b = new GitHubApi({ owner: 'b', repo: 'r', token: 't', ref: 'main' });

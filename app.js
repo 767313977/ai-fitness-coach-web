@@ -6,8 +6,9 @@ import { h, clear, icon, toast, banner } from './js/ui.js';
 import { DEMO_DATA } from './js/demo.js';
 import { noticeFromError, offlineText } from './js/status.js';
 import {
-  clearLocalState, discardTask, hasPending, hevyRecoveryTasks, pendingSummary, pruneStaleTasks,
-  resumeUnfinished, setQueueScope, dropOtherScopes, unsentCount, unsentTasks,
+  clearLocalState, discardTask, hasPending, hevyRecoveryTasks, pendingCleanups, pendingSummary,
+  pruneStaleTasks, resumeUnfinished, runCleanups, setQueueScope, dropOtherScopes, unsentCount,
+  unsentTasks,
 } from './js/queue.js';
 import { renderToday } from './pages/today.js';
 import { renderWeek } from './pages/week.js';
@@ -209,16 +210,20 @@ function render() {
         banner(`有 ${unsent} 条提交还没确认结果（刷新、断网或超时都不会丢）。`, 'warn'),
         ...summary.items.slice(0, 4).map((item) => h('div', { class: 'hint', style: 'margin-top:0' },
           `${item.label} · ${item.statusLabel}${item.createdAt ? ` · ${relTime(item.createdAt)}` : ''}`,
+          item.cleanupError ? ` · 清理失败：${item.cleanupError}` : '',
           ['unknown', 'timeout', 'uploaded'].includes(item.status)
             ? h('button', {
               class: 'btn small ghost',
               style: 'margin-left:8px;padding:2px 8px',
-              onClick: () => {
+              onClick: async () => {
                 if (!confirm('放弃后不会再检查这次提交；如果上传过 CSV，会同时删掉仓库里的临时文件。确定？')) return;
-                discardTask(item.id, state.api ?? undefined);
+                const result = await discardTask(item.id, state.api ?? undefined);
+                toast(result.ok
+                  ? '已放弃，临时文件已清理'
+                  : `清理失败：${result.error}。恢复记录已保留，可点「重试清理」`);
                 render();
               },
-            }, '放弃')
+            }, item.cleanupError ? '重试清理' : '放弃')
             : null)),
         receiptOnly > 0
           ? h('div', { class: 'hint', style: 'margin-top:0' },
@@ -245,6 +250,21 @@ function render() {
         } }, summary.needsCheck ? '继续检查' : '确认结果'),
         h('div', { class: 'hint', style: 'margin-top:8px' },
           '恢复时沿用原 request_id，不会重复写入；超时/未知的任务不会自动丢弃。'),
+      ));
+    }
+    const cleanups = state.demo ? [] : pendingCleanups();
+    if (cleanups.length) {
+      content.append(h('div', { class: 'card' },
+        banner(`有 ${cleanups.length} 个 Hevy 临时文件待清理；删除失败会保留文件索引，不会丢路径。`, 'warn'),
+        h('div', { class: 'hint', style: 'margin-top:0;word-break:break-all' },
+          cleanups.slice(0, 3).map((item) => item.path).join('、')),
+        h('button', { class: 'btn small', style: 'margin-top:10px', onClick: async () => {
+          if (!state.api) return;
+          const results = await runCleanups(state.api);
+          const failed = results.filter((item) => !item.ok).length;
+          toast(failed ? `还有 ${failed} 个文件没删掉，稍后可重试` : '临时文件已清理');
+          render();
+        } }, '重试清理'),
       ));
     }
     if (state.data?.corrupt?.length) {

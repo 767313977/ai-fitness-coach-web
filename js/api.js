@@ -433,7 +433,11 @@ export class GitHubApi {
     try {
       const meta = await this.actionsGet(`contents/${encoded}?ref=${encodeURIComponent(this.cfg.ref)}`);
       if (meta?.sha) body.sha = meta.sha;
-    } catch { /* 不存在就新建 */ }
+    } catch (error) {
+      // 只有 404 才是「文件不存在，可以新建」；403/429/5xx/网络异常必须中止，
+      // 否则会在不知道文件状态的情况下覆盖或新建，可能丢内容。
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+    }
 
     const res = await fetch(url, {
       method: 'PUT',

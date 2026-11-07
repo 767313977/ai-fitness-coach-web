@@ -5,8 +5,9 @@ import assert from 'node:assert/strict';
 
 import {
   clearLocalState, discardTask, dropOtherScopes, enqueue, enqueueHevyImport, hevyRecoveryTasks,
-  isLeaseExpired, pendingSummary, pruneStaleTasks, receiptOnlyCount, resumeTaskById, resumeUnfinished,
-  setQueueScope, taskKindLabel, taskStatusLabel, unsentCount, unsentTasks, withWriteLock,
+  isLeaseExpired, pendingCleanups, pendingSummary, pruneStaleTasks, receiptOnlyCount,
+  resumeTaskById, resumeUnfinished, runCleanups, setQueueScope, shouldRenewLease, taskKindLabel,
+  taskStatusLabel, unsentCount, unsentTasks, withWriteLock,
 } from '../js/queue.js';
 
 class MemoryStorage {
@@ -21,6 +22,147 @@ function freshEnv() {
   globalThis.sessionStorage = new MemoryStorage();
   globalThis.localStorage = new MemoryStorage();
   setQueueScope(null);
+}
+
+/**
+ * 极简 IndexedDB：同一数据库的 readwrite 事务串行执行，
+ * 用来验证「读 → 判断 → 写」在同一个事务里是原子的。
+ */
+class FakeIndexedDB {
+  constructor() { this.dbs = new Map(); }
+
+  reset() {
+    for (const state of this.dbs.values()) {
+      state.data.clear();
+      state.chain = Promise.resolve();
+    }
+  }
+
+  /** @param {string} name */
+  open(name) {
+    if (!this.dbs.has(name)) {
+      this.dbs.set(name, { data: new Map(), chain: Promise.resolve() });
+    }
+    const state = this.dbs.get(name);
+    const request = {};
+    const db = {
+      objectStoreNames: { contains: () => true },
+      createObjectStore: () => {},
+      close: () => {},
+      transaction: () => makeTx(state),
+    };
+    setTimeout(() => {
+      request.result = db;
+      request.onsuccess?.();
+    }, 0);
+    return request;
+  }
+}
+
+/** @param {{data: Map<string, any>, chain: Promise<void>}} state */
+function makeTx(state) {
+  const tx = {};
+  const ops = [];
+  const store = {
+    get(key) {
+      const req = {};
+      ops.push(() => {
+        req.result = state.data.has(key) ? structuredClone(state.data.get(key)) : undefined;
+        queueMicrotask(() => req.onsuccess?.());
+      });
+      return req;
+    },
+    put(value, key) {
+      const req = {};
+      ops.push(() => {
+        state.data.set(key, structuredClone(value));
+        queueMicrotask(() => req.onsuccess?.());
+      });
+      return req;
+    },
+    delete(key) {
+      const req = {};
+      ops.push(() => {
+        state.data.delete(key);
+        queueMicrotask(() => req.onsuccess?.());
+      });
+      return req;
+    },
+  };
+
+  const previous = state.chain;
+  let release;
+  state.chain = new Promise((resolve) => { release = resolve; });
+  previous.then(async () => {
+    for (const op of ops) {
+      op();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    tx.oncomplete?.();
+    release();
+  });
+
+  return {
+    objectStore: () => store,
+    get oncomplete() { return tx.oncomplete; },
+    set oncomplete(fn) { tx.oncomplete = fn; },
+    get onerror() { return tx.onerror; },
+    set onerror(fn) { tx.onerror = fn; },
+    get onabort() { return tx.onabort; },
+    set onabort(fn) { tx.onabort = fn; },
+  };
+}
+
+const testIdb = new FakeIndexedDB();
+
+/** 强制走 IndexedDB 兜底（临时去掉 navigator.locks）。 */
+function useIdbLease() {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  globalThis.indexedDB = testIdb;
+  Object.defineProperty(globalThis, 'navigator', { value: { locks: undefined }, configurable: true });
+  return () => {
+    if (original) Object.defineProperty(globalThis, 'navigator', original);
+    else delete globalThis.navigator;
+    delete globalThis.__AFC_LEASE_MS__;
+    testIdb.reset();
+  };
+}
+
+/** @param {any} lease */
+function seedLease(lease) {
+  if (!testIdb.dbs.has('afc-locks')) {
+    testIdb.dbs.set('afc-locks', { data: new Map(), chain: Promise.resolve() });
+  }
+  testIdb.dbs.get('afc-locks').data.set('write-lock', lease);
+}
+
+function currentLease() {
+  return testIdb.dbs.get('afc-locks')?.data.get('write-lock') ?? null;
+}
+
+/** 构造一条已上传的 Hevy 任务，用于清理/放弃测试。 */
+function seedUploadedTask(overrides = {}) {
+  const now = new Date().toISOString();
+  const task = {
+    id: 'q-hevy',
+    kind: 'hevy-import',
+    workflow: 'import_hevy_csv.yml',
+    requestId: 'cccccccc',
+    status: 'unknown',
+    uploadPath: 'uploads/hevy/x.csv',
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+  sessionStorage.setItem('afc.queue.v2', JSON.stringify([task]));
+  localStorage.setItem('afc.hevy.recovery.v1', JSON.stringify([{
+    requestId: task.requestId,
+    path: task.uploadPath,
+    workflow: task.workflow,
+    createdAt: task.createdAt,
+    status: 'uploaded',
+  }]));
+  return task;
 }
 
 /** @param {any} [overrides] */
@@ -294,7 +436,7 @@ test('discardTask：人工放弃后不再出现在未完成列表', async () => 
   const queued = enqueue(api, { workflow: 'body.yml', inputs: {}, findTimeoutMs: 0 });
   await queued.promise;
   assert.equal(unsentCount(), 1);
-  discardTask(unsentTasks()[0].id);
+  await discardTask(unsentTasks()[0].id);
   assert.equal(unsentCount(), 0);
 });
 
@@ -367,23 +509,86 @@ test('退出登录时清空队列、凭证与租约', async () => {
   assert.equal(sessionStorage.getItem('afc.queue.v2'), null);
 });
 
-test('租约过期后可重新获取，心跳不会阻止进程退出', async () => {
-  freshEnv();
+test('租约判定：过期与续期', () => {
   assert.equal(isLeaseExpired(null), true);
   assert.equal(isLeaseExpired({ until: Date.now() - 1 }), true);
   assert.equal(isLeaseExpired({ until: Date.now() + 60_000 }), false);
+  assert.equal(shouldRenewLease({ id: 'me', until: Date.now() + 1000 }, 'me'), true);
+  assert.equal(shouldRenewLease({ id: 'other', until: Date.now() + 1000 }, 'me'), false);
+});
 
-  // Node 自带 navigator.locks，这里强制走 localStorage 租约兜底路径
-  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-  Object.defineProperty(globalThis, 'navigator', { value: { locks: undefined }, configurable: true });
+test('IndexedDB 原子锁：两个标签页同时抢过期租约，只有一个持锁', async () => {
+  freshEnv();
+  const restore = useIdbLease();
   try {
-    localStorage.setItem('afc.queue.lease.v1', JSON.stringify({ id: 'other-tab', until: Date.now() - 1000 }));
+    // 模拟上一个标签页崩溃留下的过期租约
+    seedLease({ id: 'dead-tab', until: Date.now() - 1000 });
+    const A = await import('../js/queue.js?tab=a');
+    const B = await import('../js/queue.js?tab=b');
+    let holders = 0;
+    let maxHolders = 0;
+    const job = (mod) => mod.withWriteLock(async () => {
+      holders += 1;
+      maxHolders = Math.max(maxHolders, holders);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      holders -= 1;
+    });
+    await Promise.all([job(A), job(B)]);
+    assert.equal(maxHolders, 1);
+    assert.equal(currentLease(), null);
+  } finally {
+    restore();
+  }
+});
+
+test('标签页崩溃：租约过期后其他标签页可以接手', async () => {
+  freshEnv();
+  const restore = useIdbLease();
+  try {
+    seedLease({ id: 'crashed-tab', until: Date.now() - 1 });
     const value = await withWriteLock(async () => 'ok');
     assert.equal(value, 'ok');
-    assert.equal(localStorage.getItem('afc.queue.lease.v1'), null);
+    assert.equal(currentLease(), null);
+  } finally {
+    restore();
+  }
+});
+
+test('租约续期：任务超过租约时长仍持锁，结束后释放', async () => {
+  freshEnv();
+  const restore = useIdbLease();
+  try {
+    globalThis.__AFC_LEASE_MS__ = 120;
+    await withWriteLock(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      const lease = currentLease();
+      assert.ok(lease, '任务进行中应该还有租约');
+      assert.ok(lease.until > Date.now(), '心跳应该已续期，而不是等它过期');
+    });
+    assert.equal(currentLease(), null);
+  } finally {
+    restore();
+  }
+});
+
+test('无法获取可靠锁时失败关闭，不执行写入', async () => {
+  freshEnv();
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { value: { locks: undefined }, configurable: true });
+  delete globalThis.indexedDB;
+  let ran = false;
+  try {
+    // 新实例没有缓存过 IndexedDB 连接
+    const mod = await import('../js/queue.js?noidb=1');
+    await assert.rejects(
+      mod.withWriteLock(async () => { ran = true; }),
+      /无法获取写入锁/,
+    );
+    assert.equal(ran, false);
   } finally {
     if (original) Object.defineProperty(globalThis, 'navigator', original);
     else delete globalThis.navigator;
+    globalThis.indexedDB = testIdb;
   }
 });
 
@@ -414,6 +619,67 @@ test('Hevy CSV 表头不对时本地拒绝，不上传', async () => {
   await assert.rejects(queued.promise, /表头/);
   assert.equal(api.calls.upload, 0);
   assert.equal(unsentCount(), 0);
+});
+
+test('discardTask：远程删除成功后才清除任务与恢复记录', async () => {
+  freshEnv();
+  const task = seedUploadedTask();
+  let deleted = '';
+  const api = { async deleteFile(path) { deleted = path; } };
+  const result = await discardTask(task.id, api);
+  assert.equal(result.ok, true);
+  assert.equal(deleted, 'uploads/hevy/x.csv');
+  assert.equal(unsentCount(), 0);
+  assert.equal(hevyRecoveryTasks().length, 0);
+});
+
+test('discardTask：远程删除失败保留任务、恢复记录和错误', async () => {
+  freshEnv();
+  const task = seedUploadedTask();
+  const api = {
+    async deleteFile() {
+      throw Object.assign(new Error('PAT 缺少 Contents 写权限'), { status: 403 });
+    },
+  };
+  const result = await discardTask(task.id, api);
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? '', /Contents/);
+  const remaining = unsentTasks()[0];
+  assert.equal(remaining.id, task.id);
+  assert.match(remaining.cleanupError ?? '', /Contents/);
+  assert.equal(hevyRecoveryTasks().length, 1);
+});
+
+test('7 天过期：上传任务转入清理队列，不丢文件路径', () => {
+  freshEnv();
+  setQueueScope('a/b@main');
+  seedUploadedTask({ createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' });
+  assert.equal(pruneStaleTasks(), 1);
+  assert.equal(unsentCount(), 0);
+  const items = pendingCleanups();
+  assert.equal(items.length, 1);
+  assert.equal(items[0].path, 'uploads/hevy/x.csv');
+  assert.equal(hevyRecoveryTasks().length, 0);
+});
+
+test('清理队列：成功移除索引，失败保留并记录错误', async () => {
+  freshEnv();
+  setQueueScope('a/b@main');
+  localStorage.setItem('afc.cleanup.v1', JSON.stringify([{
+    requestId: 'dddddddd', path: 'uploads/hevy/y.csv', scope: 'a/b@main',
+  }]));
+
+  const ok = await runCleanups({ async deleteFile() {} });
+  assert.equal(ok[0].ok, true);
+  assert.equal(pendingCleanups().length, 0);
+
+  localStorage.setItem('afc.cleanup.v1', JSON.stringify([{
+    requestId: 'eeeeeeee', path: 'uploads/hevy/z.csv', scope: 'a/b@main',
+  }]));
+  const bad = await runCleanups({ async deleteFile() { throw new Error('网络不通'); } });
+  assert.equal(bad[0].ok, false);
+  assert.equal(pendingCleanups().length, 1);
+  assert.match(pendingCleanups()[0].lastError ?? '', /网络不通/);
 });
 
 test('pendingSummary：终态不需要继续检查，未知类型有兜底文案', () => {

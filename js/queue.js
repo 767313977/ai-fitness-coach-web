@@ -17,6 +17,7 @@ import { validateFile } from './hevy_csv.js';
 const STORE_KEY = 'afc.queue.v2';
 const HEVY_KEY = 'afc.hevy.recovery.v1';
 const RECEIPT_KEY = 'afc.receipts.v1';
+const CLEANUP_KEY = 'afc.cleanup.v1';
 const LOCK_NAME = 'afc.github.write';
 const LEASE_KEY = 'afc.queue.lease.v1';
 const LEASE_MS = 2 * 60_000;
@@ -182,6 +183,8 @@ export function pendingSummary(tasks) {
     status: task.status || 'unknown',
     statusLabel: taskStatusLabel(task.status),
     createdAt: task.createdAt || '',
+    cleanupError: task.cleanupError || '',
+    hasUpload: Boolean(task.uploadPath),
   }));
   const needsCheck = items.some((item) => (
     ['pending', 'running', 'timeout', 'unknown', 'uploaded'].includes(item.status)
@@ -308,6 +311,75 @@ export function hevyRecoveryTasks() {
   return readRecovery().filter((item) => inScope(item) && !isTerminalState(item.status));
 }
 
+/* ---------------- 远程临时文件清理队列 ---------------- */
+
+/** @returns {any[]} */
+function readCleanups() {
+  const store = localStore();
+  if (!store) return [];
+  try {
+    const raw = store.getItem(CLEANUP_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    const items = Array.isArray(list)
+      ? list.filter((item) => item && item.path && item.requestId)
+      : [];
+    if (adoptLegacyScope(items)) writeCleanups(items);
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+/** @param {any[]} list */
+function writeCleanups(list) {
+  const store = localStore();
+  if (!store) return;
+  try { store.setItem(CLEANUP_KEY, JSON.stringify(list)); } catch { /* 忽略 */ }
+}
+
+/** @param {any} item */
+function enqueueCleanup(item) {
+  const list = readCleanups();
+  const next = { ...item, scope: item.scope || scope };
+  const index = list.findIndex((row) => row.requestId === next.requestId || row.path === next.path);
+  if (index >= 0) list[index] = { ...list[index], ...next };
+  else list.push(next);
+  writeCleanups(list);
+}
+
+/** @param {string} requestId */
+function removeCleanup(requestId) {
+  writeCleanups(readCleanups().filter((row) => row.requestId !== requestId));
+}
+
+/** 待清理的远程临时文件（只返回当前仓库作用域）。 */
+export function pendingCleanups() {
+  return readCleanups().filter(inScope);
+}
+
+/**
+ * 逐个删除 uploads/ 下的临时文件；成功才从队列移除，失败保留索引和错误。
+ * @param {import('./api.js').GitHubApi} api
+ * @returns {Promise<{item: any, ok: boolean, error?: string}[]>}
+ */
+export async function runCleanups(api) {
+  const results = [];
+  for (const item of pendingCleanups()) {
+    try {
+      await api.deleteFile(item.path, `cleanup: hevy [${item.requestId}]`);
+      removeCleanup(item.requestId);
+      results.push({ item, ok: true });
+    } catch (error) {
+      const message = error?.message ?? String(error);
+      writeCleanups(readCleanups().map((row) => (row.requestId === item.requestId
+        ? { ...row, lastError: message, attempts: Number(row.attempts || 0) + 1 }
+        : row)));
+      results.push({ item, ok: false, error: message });
+    }
+  }
+  return results;
+}
+
 /**
  * 清理过期未完成任务/凭证/恢复记录（默认 7 天），避免本地存储无限增长。
  * @param {number} [maxAgeMs]
@@ -320,6 +392,29 @@ export function pruneStaleTasks(maxAgeMs = 7 * 86_400_000, now = Date.now()) {
     return Number.isFinite(at) && at < now - maxAgeMs;
   };
   const tasks = readTasks();
+  const recovery = readRecovery();
+
+  // 过期任务里的远程文件不能跟着本地任务一起丢：转入清理队列，删成功才移除索引
+  for (const task of tasks) {
+    if (!isStale(task) || !task.uploadPath) continue;
+    enqueueCleanup({
+      requestId: task.requestId,
+      path: task.uploadPath,
+      scope: task.scope || scope,
+      createdAt: task.createdAt,
+    });
+  }
+  for (const record of recovery) {
+    if (!isStale(record)) continue;
+    if (tasks.some((task) => task.requestId === record.requestId)) continue;
+    enqueueCleanup({
+      requestId: record.requestId,
+      path: record.path,
+      scope: record.scope || scope,
+      createdAt: record.createdAt,
+    });
+  }
+
   const keptTasks = tasks.filter((item) => !isStale(item));
   if (keptTasks.length !== tasks.length) writeTasks(keptTasks);
 
@@ -327,7 +422,6 @@ export function pruneStaleTasks(maxAgeMs = 7 * 86_400_000, now = Date.now()) {
   const keptReceipts = receipts.filter((item) => !isStale(item));
   if (keptReceipts.length !== receipts.length) writeReceipts(keptReceipts);
 
-  const recovery = readRecovery();
   const keptRecovery = recovery.filter((item) => !isStale(item));
   if (keptRecovery.length !== recovery.length) writeRecovery(keptRecovery);
 
@@ -363,32 +457,111 @@ export function clearLocalState() {
   stopLeaseHeartbeat();
   pending = 0;
   chain = Promise.resolve();
+  // 只释放自己的 IndexedDB 租约；失败就等它自然过期
+  void releaseLease();
 }
 
 /* ---------------- 多标签页锁 ---------------- */
+
+const IDB_NAME = 'afc-locks';
+const IDB_STORE = 'leases';
+const IDB_KEY = 'write-lock';
 
 /** 租约是否已过期（不存在也算过期）。 @param {any} lease @param {number} [now] */
 export function isLeaseExpired(lease, now = Date.now()) {
   return !lease || !Number.isFinite(Number(lease.until)) || Number(lease.until) < now;
 }
 
+/** 续期判定：只要还是自己的租约就续。 @param {any} lease @param {string} owner @param {number} [now] */
+export function shouldRenewLease(lease, owner, now = Date.now()) {
+  return Boolean(lease && lease.id === owner && Number(lease.until) >= now);
+}
+
+/** Node 测试可覆盖租约时长；浏览器里始终是 2 分钟。 */
+function leaseDuration() {
+  const override = Number(globalThis.__AFC_LEASE_MS__);
+  return Number.isFinite(override) && override > 0 ? override : LEASE_MS;
+}
+
+let idbPromise = null;
+
+function openLockDb() {
+  if (typeof indexedDB === 'undefined') {
+    return Promise.reject(new Error('浏览器不支持 IndexedDB，无法保证写入互斥'));
+  }
+  if (!idbPromise) {
+    idbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(IDB_NAME, 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(IDB_STORE)) {
+          request.result.createObjectStore(IDB_STORE);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('IndexedDB 打开失败'));
+      request.onblocked = () => reject(new Error('IndexedDB 被其他标签页阻塞'));
+    }).catch((error) => {
+      idbPromise = null;
+      throw error;
+    });
+  }
+  return idbPromise;
+}
+
+/**
+ * 在同一个 readwrite 事务里「读 → 判断 → 写」，由 IndexedDB 串行化保证原子性。
+ * 两个标签页同时看到过期租约时，也只有一个事务能先写入，另一个会读到新租约。
+ * @param {number} now
+ * @returns {Promise<boolean>}
+ */
+function claimLease(now) {
+  return openLockDb().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    const get = store.get(IDB_KEY);
+    let acquired = false;
+    get.onsuccess = () => {
+      const lease = get.result;
+      if (isLeaseExpired(lease, now) || lease.id === TAB_ID) {
+        store.put({ id: TAB_ID, until: now + leaseDuration() }, IDB_KEY);
+        acquired = true;
+      }
+    };
+    get.onerror = () => reject(get.error ?? new Error('读取租约失败'));
+    tx.oncomplete = () => resolve(acquired);
+    tx.onerror = () => reject(tx.error ?? new Error('写入租约失败'));
+    tx.onabort = () => reject(tx.error ?? new Error('写入租约中止'));
+  }));
+}
+
+function mutateLease(mutator) {
+  return openLockDb().then((db) => new Promise((resolve) => {
+    let tx;
+    try { tx = db.transaction(IDB_STORE, 'readwrite'); } catch { resolve(); return; }
+    const store = tx.objectStore(IDB_STORE);
+    const get = store.get(IDB_KEY);
+    get.onsuccess = () => {
+      try { mutator(store, get.result); } catch { /* 忽略单次失败 */ }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+    tx.onabort = () => resolve();
+  })).catch(() => { /* 续期/释放失败交给过期机制 */ });
+}
+
 let leaseTimer = 0;
 
-/** 只续自己的租约，避免把别的标签页刚拿到的锁续掉。 */
 function renewLease() {
-  const store = localStore();
-  if (!store) return;
-  try {
-    const lease = JSON.parse(store.getItem(LEASE_KEY) || 'null');
-    if (lease?.id === TAB_ID) {
-      store.setItem(LEASE_KEY, JSON.stringify({ id: TAB_ID, until: Date.now() + LEASE_MS }));
+  void mutateLease((store, lease) => {
+    if (shouldRenewLease(lease, TAB_ID)) {
+      store.put({ id: TAB_ID, until: Date.now() + leaseDuration() }, IDB_KEY);
     }
-  } catch { /* 忽略 */ }
+  });
 }
 
 function startLeaseHeartbeat() {
   stopLeaseHeartbeat();
-  const timer = setInterval(renewLease, Math.floor(LEASE_MS / 4));
+  const timer = setInterval(renewLease, Math.max(10, Math.floor(leaseDuration() / 4)));
   // Node 测试环境下不要阻止进程退出
   if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
   leaseTimer = timer;
@@ -400,30 +573,31 @@ function stopLeaseHeartbeat() {
 }
 
 async function acquireLease() {
-  const store = localStore();
-  if (!store) return;
+  let lastError = null;
   for (let i = 0; i < 420; i += 1) {
-    let lease = null;
-    try { lease = JSON.parse(store.getItem(LEASE_KEY) || 'null'); } catch { lease = null; }
-    if (isLeaseExpired(lease) || lease.id === TAB_ID) {
-      store.setItem(LEASE_KEY, JSON.stringify({ id: TAB_ID, until: Date.now() + LEASE_MS }));
-      // 运行超过 2 分钟时持续续期，不会中途丢掉锁；标签页崩溃后心跳停止，租约自然过期
-      startLeaseHeartbeat();
-      return;
+    try {
+      if (await claimLease(Date.now())) {
+        // 运行超过租约时长时持续续期；标签页崩溃后心跳停止，租约自然过期
+        startLeaseHeartbeat();
+        return;
+      }
+    } catch (error) {
+      // 拿不到可靠的原子锁：失败关闭，绝不无锁写入
+      lastError = error;
+      break;
     }
     await sleep(1_000);
   }
-  throw new Error('另一个标签页正在提交，请等它完成后再试');
+  throw new Error(
+    `另一个标签页正在提交，或无法获取写入锁${lastError ? `（${lastError.message}）` : ''}，已停止提交`,
+  );
 }
 
-function releaseLease() {
+async function releaseLease() {
   stopLeaseHeartbeat();
-  const store = localStore();
-  if (!store) return;
-  try {
-    const lease = JSON.parse(store.getItem(LEASE_KEY) || 'null');
-    if (lease?.id === TAB_ID) store.removeItem(LEASE_KEY);
-  } catch { /* 忽略 */ }
+  await mutateLease((store, lease) => {
+    if (lease?.id === TAB_ID) store.delete(IDB_KEY);
+  });
 }
 
 /**
@@ -438,7 +612,11 @@ export async function withWriteLock(fn) {
     return locks.request(LOCK_NAME, { mode: 'exclusive' }, fn);
   }
   await acquireLease();
-  try { return await fn(); } finally { releaseLease(); }
+  try {
+    return await fn();
+  } finally {
+    await releaseLease();
+  }
 }
 
 /* ---------------- 任务执行 ---------------- */
@@ -560,9 +738,11 @@ export function enqueue(api, opts) {
  * @param {(s: string) => void} onStatus
  */
 export function enqueueHevyImport(api, file, onStatus) {
-  // 之前上传阶段就失败、没有路径的导入无法恢复；用户重新选文件时清掉
+  // 之前上传阶段就失败、没有路径的导入无法恢复；用户重新选文件时清掉（没有远程文件要删）
   for (const old of readTasks()) {
-    if (old.kind === 'hevy-import' && !old.uploadPath) discardTask(old.id);
+    if (old.kind !== 'hevy-import' || old.uploadPath) continue;
+    removeTask(old.id);
+    if (old.requestId) removeRecovery(old.requestId);
   }
   const unresolved = readTasks().filter((item) => (
     inScope(item) && item.kind === 'hevy-import' && item.uploadPath
@@ -714,15 +894,30 @@ export async function resumeUnfinished(api, opts = {}) {
 
 /**
  * 用户主动放弃一条无法恢复的任务（例如上传阶段失败、没有文件路径）。
- * 传了 api 且任务有上传路径时，顺手删掉仓库里的临时 CSV，避免残留。
+ * 远程文件删成功后才清除本地任务/恢复记录；失败则保留索引并记下错误，可重试。
  * @param {string} id
  * @param {import('./api.js').GitHubApi} [api]
+ * @returns {Promise<{ok: boolean, error?: string}>}
  */
-export function discardTask(id, api) {
+export async function discardTask(id, api) {
   const task = readTasks().find((item) => item.id === id);
-  removeTask(id);
-  if (task?.requestId) removeRecovery(task.requestId);
-  if (api && task?.uploadPath && typeof api.deleteFile === 'function') {
-    api.deleteFile(task.uploadPath, `cleanup: hevy [${task.requestId}]`).catch(() => { /* 清理失败不阻塞 */ });
+  if (!task) return { ok: true };
+
+  if (api && task.uploadPath && typeof api.deleteFile === 'function') {
+    try {
+      // 404 已在 deleteFile 内部视为成功；其它错误都要保留恢复记录
+      await api.deleteFile(task.uploadPath, `cleanup: hevy [${task.requestId}]`);
+    } catch (error) {
+      const message = error?.message ?? String(error);
+      setTaskStatus(task.id, task.status || RUN_STATE.unknown, {
+        cleanupError: message,
+        cleanupAttempts: Number(task.cleanupAttempts || 0) + 1,
+      });
+      return { ok: false, error: message };
+    }
   }
+
+  removeTask(id);
+  if (task.requestId) removeRecovery(task.requestId);
+  return { ok: true };
 }
