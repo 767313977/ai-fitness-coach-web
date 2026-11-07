@@ -99,6 +99,20 @@ export function clearCache() {
   try { sessionStorage.removeItem(CACHE_KEY); } catch { /* noop */ }
 }
 
+/**
+ * 选择目标分支：用户填了就用填的，否则用仓库默认分支，最后兜底 master。
+ * 不写死 master，main 仓库同样能用。
+ * @param {string|undefined} savedBranch
+ * @param {string|undefined} defaultBranch
+ * @returns {string}
+ */
+export function resolveBranch(savedBranch, defaultBranch) {
+  const own = String(savedBranch ?? '').trim();
+  if (own) return own;
+  const fallback = String(defaultBranch ?? '').trim();
+  return fallback || 'master';
+}
+
 export class GitHubApi {
   /** @param {ApiConfig} cfg */
   constructor(cfg) {
@@ -205,6 +219,10 @@ export class GitHubApi {
       private: data?.private === true,
       fullName: typeof data?.full_name === 'string' ? data.full_name : `${this.cfg.owner}/${this.cfg.repo}`,
       canPush: data?.permissions?.push !== false,
+      /** 仓库默认分支：用户没填分支时用它，避免写死 master */
+      defaultBranch: typeof data?.default_branch === 'string' && data.default_branch
+        ? data.default_branch
+        : 'master',
     };
   }
 

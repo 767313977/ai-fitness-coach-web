@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ApiError, GitHubApi, PublicRepoError, newRequestId } from '../js/api.js';
+import { ApiError, GitHubApi, PublicRepoError, newRequestId, resolveBranch } from '../js/api.js';
 
 /** @param {any} body @param {number} [status] */
 function json(body, status = 200) {
@@ -113,4 +113,29 @@ test('request_id 是 8 位小写十六进制且不重复', () => {
     seen.add(id);
   }
   assert.ok(seen.size >= 499);
+});
+
+test('repoMeta 返回仓库默认分支，main 仓库也能自动识别', async () => {
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/repos/owner/main-repo')) {
+      return json({ private: true, default_branch: 'main', permissions: { push: true } });
+    }
+    throw new Error(`不应访问：${u}`);
+  };
+  const api = new GitHubApi({ owner: 'owner', repo: 'main-repo', token: 'dummy' });
+  const meta = await api.repoMeta();
+  assert.equal(meta.defaultBranch, 'main');
+});
+
+test('resolveBranch：填了用填的，没填用默认分支，最后兜底 master', () => {
+  assert.equal(resolveBranch('', 'main'), 'main');
+  assert.equal(resolveBranch('  dev  ', 'main'), 'dev');
+  assert.equal(resolveBranch(undefined, ''), 'master');
+  assert.equal(resolveBranch(null, undefined), 'master');
+});
+
+test('urlFor 使用传入的分支，不写死 master', () => {
+  const api = new GitHubApi({ owner: 'owner', repo: 'repo', token: 'dummy', ref: 'main' });
+  assert.match(api.urlFor('config.json'), /ref=main/);
 });

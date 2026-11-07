@@ -1,6 +1,6 @@
 // @ts-check
 /** 应用外壳：登录、路由、数据加载、侧边栏。 */
-import { ApiError, GitHubApi, PublicRepoError, clearCache, setCachePersistence } from './js/api.js';
+import { ApiError, GitHubApi, PublicRepoError, clearCache, resolveBranch, setCachePersistence } from './js/api.js';
 import { loadAll, todayISO, fmtDate } from './js/data.js';
 import { h, clear, icon, toast, banner } from './js/ui.js';
 import { DEMO_DATA } from './js/demo.js';
@@ -15,7 +15,7 @@ import { renderLibrary } from './pages/library.js';
 const AUTH_KEY = 'afc.auth.v1';
 const DEMO_KEY = 'afc.demo';
 
-/** @typedef {{owner: string, repo: string, token: string, remember: boolean}} Auth */
+/** @typedef {{owner: string, repo: string, branch?: string, token: string, remember: boolean}} Auth */
 
 const state = {
   /** @type {Auth|null} */
@@ -100,18 +100,21 @@ async function connect(opts = {}) {
     if (state.demo) {
       state.data = DEMO_DATA;
     } else {
-      state.api = new GitHubApi({ ...state.auth, ref: 'master' });
-      // 每次连接都复核 private；断网时忽略这项检查，保留离线缓存能力
-      const privacy = state.api.repoMeta().catch((error) => {
-        if (error instanceof PublicRepoError) throw error;
-        return null;
-      });
-      const [meta, data] = await Promise.all([
-        privacy,
-        loadAll(state.api, { fresh: Boolean(opts.fresh) }),
-      ]);
+      const auth = /** @type {Auth} */ (state.auth);
+      // 老版本保存的 auth 没有 branch：先按 master 探测，再用仓库的默认分支纠正。
+      const probe = new GitHubApi({ ...auth, ref: auth.branch || 'master' });
+      let meta = null;
+      try {
+        meta = await probe.repoMeta();
+      } catch {
+        // 断网时忽略仓库检查，继续用缓存；分支沿用已保存的值
+        meta = null;
+      }
       if (meta && meta.private !== true) throw new PublicRepoError();
-      state.data = data;
+      const branch = resolveBranch(auth.branch, meta?.defaultBranch);
+      state.auth = { ...auth, branch };
+      state.api = branch === probe.cfg.ref ? probe : new GitHubApi({ ...state.auth });
+      state.data = await loadAll(state.api, { fresh: Boolean(opts.fresh) });
     }
   } catch (error) {
     state.error = /** @type {Error} */ (error);
@@ -330,6 +333,8 @@ function loginView() {
   const saved = loadAuth();
   const owner = h('input', { id: 'owner', class: 'input', placeholder: '你的 GitHub 用户名', value: saved?.owner ?? '' });
   const repo = h('input', { id: 'repo', class: 'input', placeholder: 'ai-fitness-coach', value: saved?.repo ?? 'ai-fitness-coach' });
+  // 留空 = 连接时自动识别仓库默认分支（main / master 都行），不再写死 master
+  const branch = h('input', { id: 'branch', class: 'input', placeholder: '留空自动识别（如 main / master）', value: saved?.branch ?? '' });
   const token = h('input', { id: 'token', class: 'input', type: 'password', placeholder: 'github_pat_… 或 ghp_…', autocomplete: 'off' });
   // 默认不勾：同域名下的其他 GitHub Pages 也能读到 localStorage 里的 PAT
   const remember = h('input', { type: 'checkbox', id: 'remember', checked: false });
@@ -351,6 +356,7 @@ function loginView() {
     const auth = {
       owner: owner.value.trim(),
       repo: repo.value.trim() || 'ai-fitness-coach',
+      branch: branch.value.trim(),
       token: token.value.trim(),
       remember: rememberValue,
     };
@@ -362,18 +368,22 @@ function loginView() {
     connectBtn.disabled = true;
     connectBtn.textContent = '验证仓库…';
     try {
-      const api = new GitHubApi({ ...auth, ref: 'master' });
+      const probe = new GitHubApi({ ...auth, ref: auth.branch || 'master' });
       // 必须确认是私有仓库，否则不保存 PAT（健康数据不能进公开仓库）
-      const report = await api.verifyRepo();
-      if (!report.private) throw new Error('这个仓库不是私有仓库');
-      state.auth = auth;
+      const meta = await probe.repoMeta();
+      if (!meta.private) throw new Error('这个仓库不是私有仓库');
+      // 用户没填分支就用仓库默认分支；填了就用填的，随后 verifyRepo 会验证分支下确有数据
+      const resolved = resolveBranch(auth.branch, meta.defaultBranch);
+      const api = resolved === probe.cfg.ref ? probe : new GitHubApi({ ...auth, ref: resolved });
+      await api.verifyRepo();
+      state.auth = { ...auth, branch: resolved };
       state.demo = false;
       sessionStorage.removeItem(DEMO_KEY);
-      saveAuth(auth);
+      saveAuth(state.auth);
       setCachePersistence(auth.remember);
       await connect();
       navigate('/today');
-      toast('已验证私有仓库并连接成功');
+      toast(`已验证私有仓库并连接成功（分支 ${resolved}）`);
     } catch (error) {
       clear(errorBox);
       errorBox.append(banner(errorText(error), 'err'));
@@ -391,6 +401,10 @@ function loginView() {
       h('div', { class: 'card' },
         h('div', { class: 'field' }, h('label', { for: 'owner' }, 'GitHub 账号'), owner),
         h('div', { class: 'field' }, h('label', { for: 'repo' }, '仓库名'), repo),
+        h('div', { class: 'field' },
+          h('label', { for: 'branch' }, '分支'), branch,
+          h('div', { class: 'hint' }, '留空会用仓库的默认分支（main 或 master 都行）；填了就必须真实存在。'),
+        ),
         h('div', { class: 'field' },
           h('label', { for: 'token' }, 'Fine-grained PAT'), token,
           h('div', { class: 'hint' }, '权限：Contents 读写（导入 Hevy 要用）+ Actions 读写；范围只授权这一个仓库。'),

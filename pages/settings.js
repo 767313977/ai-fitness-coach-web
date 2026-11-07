@@ -42,7 +42,7 @@ export function renderSettings(ctx) {
     h('div', { class: 'row' },
       h('div', { class: 'grow' },
         h('div', { class: 'name' }, `${auth.owner}/${auth.repo}`),
-        h('div', { class: 'sub' }, `PAT ${maskToken(auth.token)} · ${auth.remember ? '已记住' : '仅本次会话'}`),
+        h('div', { class: 'sub' }, `分支 ${auth.branch || 'master'} · PAT ${maskToken(auth.token)} · ${auth.remember ? '已记住' : '仅本次会话'}`),
       ),
       h('a', { class: 'chip ice', href: `https://github.com/${auth.owner}/${auth.repo}`, target: '_blank', rel: 'noopener noreferrer' }, '打开仓库'),
     ),

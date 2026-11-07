@@ -9,6 +9,7 @@ import {
   loadIndex, loadBodyPart, bodyPartSlug, searchFull,
   CATEGORIES, matchesCategory,
 } from '../js/dataset.js';
+import { collectPlanEntries, reconcileSelection } from '../js/library_state.js';
 
 const STEP_LANG_KEY = 'afc.steps.lang';
 /** 分步说明语言：zh（默认）/ en，记住上次选择 */
@@ -78,6 +79,8 @@ export function renderLibrary(ctx) {
 
   /** @type {any[]} */
   let dataset = [];
+  /** 精选动作库加载失败的原因；页面降级为「只看本计划动作」 */
+  let datasetError = '';
   /** @type {Map<string, any>} */
   let planMap = new Map();
   /** @type {any[]} */
@@ -126,7 +129,7 @@ export function renderLibrary(ctx) {
     } catch (error) {
       fullError = navigator.onLine === false
         ? '完整动作库需要联网，离线时不可用（课表的 13 个动作插图和说明仍可查看）'
-        : error?.message ?? String(error);
+        : `完整动作库索引加载失败（${error?.message ?? error}）。可以点「重试加载完整库」，或关掉开关只用精选动作。`;
       fullMode = false;
       toggle.checked = false;
       sessionStorage.setItem('afc.library.full', '0');
@@ -139,8 +142,13 @@ export function renderLibrary(ctx) {
   function renderStatus() {
     clear(statusBox);
     if (fullLoading) statusBox.append(h('div', { class: 'hint' }, '正在下载动作索引…'));
-    else if (fullError) statusBox.append(banner(fullError, 'err'));
-    else if (fullIndex) statusBox.append(h('div', { class: 'hint' }, `完整库已加载：${fullIndex.length} 个动作`));
+    else if (fullError) {
+      statusBox.append(banner(fullError, 'err'));
+      statusBox.append(h('button', {
+        class: 'btn small',
+        onClick: () => { fullError = ''; renderStatus(); ensureIndex(); },
+      }, '重试加载完整库'));
+    } else if (fullIndex) statusBox.append(h('div', { class: 'hint' }, `完整库已加载：${fullIndex.length} 个动作`));
   }
 
   function isSelectedFull(entry) {
@@ -210,6 +218,13 @@ export function renderLibrary(ctx) {
     }
 
     clear(listBox);
+    if (datasetError) {
+      listBox.append(banner(datasetError, 'warn'));
+      listBox.append(h('button', {
+        class: 'btn small',
+        onClick: () => retryDataset(),
+      }, '重试加载精选动作'));
+    }
     if (!dataset.length) return;
 
     const curated = searchExercises(dataset, query, 60)
@@ -272,7 +287,10 @@ export function renderLibrary(ctx) {
           ex.rpe_cap != null ? h('span', { class: 'chip' }, `RPE ≤ ${ex.rpe_cap}`) : null,
         ),
         ex.cue ? h('p', { class: 'hint', style: 'margin-top:12px' }, `动作要点：${ex.cue}`) : null,
-        h('p', { class: 'hint', style: 'margin-top:10px' }, '动作库里没有同名条目；可以在 js/dataset.js 的 PLAN_MATCHERS 里补关键词。'),
+        h('p', { class: 'hint', style: 'margin-top:10px' },
+          datasetError
+            ? '精选动作说明暂时不可用；上面是这个动作的课表处方，历史记录仍可查看。'
+            : '动作库里没有同名条目；可以在 js/dataset.js 的 PLAN_MATCHERS 里补关键词。'),
       ));
       return;
     }
@@ -344,26 +362,40 @@ export function renderLibrary(ctx) {
     right.append(illustrationCard(ex, item));
   }
 
-  (async () => {
+  /** 精选动作库加载失败后重试；成功后补齐说明并重绘 */
+  async function retryDataset() {
+    datasetError = '';
     try {
       dataset = await loadExercises();
       planMap = matchPlan(ctx.data.routine, dataset);
-      const seen = new Set();
-      for (const day of ctx.data.routine?.days ?? []) {
-        for (const ex of day.exercises ?? []) {
-          if (ex.key && !seen.has(ex.key)) { seen.add(ex.key); planEntries.push(ex); }
-        }
-      }
-      if (!selected && planEntries.length) {
-        selected = { item: entryFor(planEntries[0]), ex: planEntries[0] };
-      }
-      if (fullMode) await ensureIndex();
-      renderList();
-      renderDetail();
+      // 降级期间选中的课表动作没有说明条目，补齐后要换成真实条目
+      selected = reconcileSelection(selected, planMap);
     } catch (error) {
-      clear(listBox);
-      listBox.append(banner(`动作库加载失败：${error?.message ?? error}`, 'err'));
+      datasetError = navigator.onLine === false
+        ? '离线：精选动作说明暂时读不到；本计划动作仍可查看、记录和看历史。'
+        : `精选动作说明加载失败（${error?.message ?? error}）。本计划动作仍可查看；网络恢复后点「重试加载精选动作」。`;
     }
+    renderList();
+    renderDetail();
+  }
+
+  (async () => {
+    // 先填本计划动作：即使 data/exercises.json 读不到，这 13 个动作也能看、能查历史。
+    planEntries.push(...collectPlanEntries(ctx.data.routine));
+    if (!selected && planEntries.length) {
+      selected = { item: entryFor(planEntries[0]), ex: planEntries[0] };
+    }
+    try {
+      dataset = await loadExercises();
+      planMap = matchPlan(ctx.data.routine, dataset);
+    } catch (error) {
+      datasetError = navigator.onLine === false
+        ? '离线：精选动作说明暂时读不到；本计划动作仍可查看、记录和看历史。'
+        : `精选动作说明加载失败（${error?.message ?? error}）。本计划动作仍可查看；网络恢复后点「重试加载精选动作」。`;
+    }
+    if (fullMode) await ensureIndex();
+    renderList();
+    renderDetail();
   })();
 
   return wrap;
