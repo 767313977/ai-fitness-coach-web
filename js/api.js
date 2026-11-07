@@ -38,6 +38,26 @@ export class PublicRepoError extends ApiError {
   }
 }
 
+/**
+ * 403 的真实原因：二级限流 / 主限流 / 权限不足。
+ * 二级限流常见于短时间连续请求，剩余次数可能还不是 0。
+ * @param {Response} response
+ * @param {string} permissionMessage
+ * @returns {Promise<string>}
+ */
+async function forbiddenMessage(response, permissionMessage) {
+  let body = '';
+  try { body = (await response.text()).toLowerCase(); } catch { /* 读不到 body 就按权限处理 */ }
+  const secondary = response.headers.get('Retry-After')
+    || body.includes('secondary rate limit')
+    || body.includes('abuse detection');
+  if (secondary) return 'GitHub 触发了二级限流，请等 1–2 分钟再试';
+  if (response.headers.get('X-RateLimit-Remaining') === '0') {
+    return 'GitHub API 限流了（每小时 5000 次），过一会儿再试';
+  }
+  return permissionMessage;
+}
+
 /** @type {Map<string, {etag: string|null, text: string, at: number}>} */
 let memoryCache = new Map();
 
@@ -167,15 +187,7 @@ export class GitHubApi {
     }
     if (res.status === 401) throw new ApiError('PAT 无效或已过期，重新填一个', 401);
     if (res.status === 403) {
-      const remaining = res.headers.get('X-RateLimit-Remaining');
-      const rateLimited = remaining === '0';
-      throw new ApiError(
-        rateLimited
-          ? 'GitHub API 限流了（每小时 5000 次），过一会儿再试'
-          : 'PAT 没有这个仓库的读取权限',
-        403,
-        { rateLimited },
-      );
+      throw new ApiError(await forbiddenMessage(res, 'PAT 没有这个仓库的读取权限'), 403);
     }
     if (!res.ok) throw new ApiError(`GitHub 返回 ${res.status}`, res.status);
 
@@ -212,7 +224,7 @@ export class GitHubApi {
     if (res.status === 404) {
       throw new ApiError('仓库不存在，或 PAT 没有这个私有仓库的访问权限（fine-grained PAT 要选中该仓库）', 404);
     }
-    if (res.status === 403) throw new ApiError('PAT 没有读取仓库信息的权限（或 API 限流）', 403);
+    if (res.status === 403) throw new ApiError(await forbiddenMessage(res, 'PAT 没有读取仓库信息的权限'), 403);
     if (!res.ok) throw new ApiError(`读取仓库信息失败：GitHub 返回 ${res.status}`, res.status);
     const data = await res.json();
     return {
@@ -272,7 +284,7 @@ export class GitHubApi {
     });
     if (res.status === 401) throw new ApiError('PAT 无效或已过期，重新填一个', 401);
     if (res.status === 404) throw new ApiError('PAT 没有这个仓库的访问权限', 404);
-    if (res.status === 403) throw new ApiError('PAT 缺少 Actions 读取权限', 403);
+    if (res.status === 403) throw new ApiError(await forbiddenMessage(res, 'PAT 缺少 Actions 读取权限'), 403);
     if (!res.ok) throw new ApiError(`Actions 接口返回 ${res.status}`, res.status);
     const data = await res.json();
     return (data?.total_count ?? 0);
@@ -303,7 +315,7 @@ export class GitHubApi {
     if (res.status === 204) return;
     if (res.status === 401) throw new ApiError('PAT 无效或已过期', 401);
     if (res.status === 404) throw new ApiError('工作流不存在，或 PAT 没有 Actions 权限', 404);
-    if (res.status === 403) throw new ApiError('PAT 缺少 Actions: write 权限', 403);
+    if (res.status === 403) throw new ApiError(await forbiddenMessage(res, 'PAT 缺少 Actions: write 权限'), 403);
     if (res.status === 422) throw new ApiError('提交参数被 GitHub 拒绝了（检查工作流 inputs）', 422);
     throw new ApiError(`派发失败：GitHub 返回 ${res.status}`, res.status);
   }
@@ -351,6 +363,7 @@ export class GitHubApi {
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
+    if (res.status === 403) throw new ApiError(await forbiddenMessage(res, 'PAT 没有读取权限'), 403);
     if (!res.ok) throw new ApiError(`GitHub 返回 ${res.status}`, res.status);
     return res.json();
   }
@@ -382,7 +395,7 @@ export class GitHubApi {
       body: JSON.stringify(body),
     });
     if (res.status === 403) {
-      throw new ApiError('PAT 缺少 Contents 写权限（导入 Hevy 需要）', 403);
+      throw new ApiError(await forbiddenMessage(res, 'PAT 缺少 Contents 写权限（导入 Hevy 需要）'), 403);
     }
     if (!res.ok) throw new ApiError(`上传失败：GitHub 返回 ${res.status}`, res.status);
     return res.json();

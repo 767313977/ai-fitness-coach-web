@@ -11,11 +11,11 @@ import { markdown } from '../js/ui.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, '..', 'index.html'), 'utf8');
 
-test('CSP 只允许 GitHub API，并限制 object / frame', () => {
+test('CSP 只允许 GitHub API，并限制 object；frame-ancestors 不能放在 meta 里', () => {
   assert.match(html, /connect-src 'self' https:\/\/api\.github\.com/);
   assert.ok(!html.includes('raw.githubusercontent.com'));
   assert.match(html, /object-src 'none'/);
-  assert.match(html, /frame-ancestors 'none'/);
+  assert.ok(!html.includes('frame-ancestors'));
   assert.match(html, /script-src 'self'/);
 });
 

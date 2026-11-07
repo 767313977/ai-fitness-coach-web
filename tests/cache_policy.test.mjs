@@ -24,7 +24,13 @@ test('isOwnCache 只认本项目前缀', () => {
 });
 
 test('模拟 activate：其他项目缓存全部保留', () => {
-  const keys = ['afc-web:shell:v8', 'afc-web:shell:v9', 'zhifujing-v3', 'another-pages-cache'];
+  const keys = [
+    'afc-web:shell:v8',
+    'afc-web:shell:v9',
+    CACHE_NAME,
+    'zhifujing-v3',
+    'another-pages-cache',
+  ];
   const removed = keys.filter((key) => shouldDeleteCache(key, CACHE_NAME));
-  assert.deepEqual(removed, ['afc-web:shell:v8']);
+  assert.deepEqual(removed, ['afc-web:shell:v8', 'afc-web:shell:v9']);
 });

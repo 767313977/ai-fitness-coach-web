@@ -105,6 +105,44 @@ test('只读账号：permissions.push=false 时拒绝', async () => {
   );
 });
 
+test('403 二级限流：不误报成 PAT 权限不足', async () => {
+  globalThis.fetch = async () => new Response('{"message":"You have exceeded a secondary rate limit"}', {
+    status: 403,
+    headers: { 'Retry-After': '60', 'X-RateLimit-Remaining': '4999' },
+  });
+  const api = new GitHubApi({ owner: 'owner', repo: 'secondary-limit', token: 'dummy', ref: 'master' });
+  await assert.rejects(
+    api.raw('config.json'),
+    (error) => error instanceof ApiError
+      && /二级限流/.test(error.message)
+      && !/读取权限/.test(error.message),
+  );
+});
+
+test('403 主限流：剩余次数为 0 时提示限流', async () => {
+  globalThis.fetch = async () => new Response('{"message":"API rate limit exceeded"}', {
+    status: 403,
+    headers: { 'X-RateLimit-Remaining': '0' },
+  });
+  const api = new GitHubApi({ owner: 'owner', repo: 'primary-limit', token: 'dummy', ref: 'master' });
+  await assert.rejects(
+    api.raw('config.json'),
+    (error) => error instanceof ApiError && /限流/.test(error.message),
+  );
+});
+
+test('403 普通权限不足：仍提示 PAT 读取权限', async () => {
+  globalThis.fetch = async () => new Response('{"message":"Resource not accessible"}', {
+    status: 403,
+    headers: { 'X-RateLimit-Remaining': '4999' },
+  });
+  const api = new GitHubApi({ owner: 'owner', repo: 'forbidden', token: 'dummy', ref: 'master' });
+  await assert.rejects(
+    api.raw('config.json'),
+    (error) => error instanceof ApiError && /读取权限/.test(error.message),
+  );
+});
+
 test('request_id 是 8 位小写十六进制且不重复', () => {
   const seen = new Set();
   for (let i = 0; i < 500; i += 1) {
