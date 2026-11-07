@@ -1,6 +1,6 @@
 ﻿// @ts-check
 /** 设置：账号、连接测试、数据导出、缓存、演示模式。 */
-import { h, banner, toast } from '../js/ui.js';
+import { h, banner, clear, toast } from '../js/ui.js';
 import { clearCache } from '../js/api.js';
 import { hevyMode, hevySyncStatus, fmtDateTime, HEVY_SYNC_STALE_HOURS } from '../js/data.js';
 
@@ -42,10 +42,17 @@ export function renderSettings(ctx) {
     h('div', { class: 'row' },
       h('div', { class: 'grow' },
         h('div', { class: 'name' }, `${auth.owner}/${auth.repo}`),
-        h('div', { class: 'sub' }, `分支 ${auth.branch || '未识别'} · PAT ${maskToken(auth.token)} · ${auth.remember ? '已记住' : '仅本次会话'}`),
+        h('div', { class: 'sub' }, `实际使用分支 ${auth.branch || '未识别'} · PAT ${maskToken(auth.token)}`),
+        h('div', { class: 'sub' },
+          auth.remember
+            ? '已记住 PAT：关掉浏览器仍有效，直到手动退出或 PAT 过期。'
+            : '仅本次会话：关闭标签页后需要重新填 PAT。'),
       ),
       h('a', { class: 'chip ice', href: `https://github.com/${auth.owner}/${auth.repo}`, target: '_blank', rel: 'noopener noreferrer' }, '打开仓库'),
     ),
+    h('div', { class: 'hint', style: 'margin-top:10px' },
+      'PAT 建议：过期时间 ≤ 90 天；权限只要 Contents 读写（导入 Hevy 需要）+ Actions 读写；'
+      + 'Repository access 只勾这一个私有仓库。'),
   ));
 
   const testStatus = h('div', { class: 'hint', style: 'min-height:20px' });
@@ -66,6 +73,7 @@ export function renderSettings(ctx) {
     testStatus,
   ));
 
+  left.append(selfCheckCard(ctx));
   left.append(exportCard(ctx));
   left.append(dataStatusCard(ctx));
 
@@ -73,7 +81,12 @@ export function renderSettings(ctx) {
     h('div', { class: 'card-title' }, '本机缓存'),
     h('div', { class: 'hint', style: 'margin-bottom:10px' }, '网页会缓存读取过的文件（ETag 做 304 校验）。summary / sync_state 只缓存 30 秒，其它数据 60 秒，点「刷新」会强制重新拉取。缓存损坏时清一下。'),
     h('div', { class: 'field-row' },
-      h('button', { class: 'btn small', onClick: () => { clearCache(); toast('缓存已清，正在重新拉取'); ctx.refresh(); } }, '清缓存并刷新'),
+      h('button', { class: 'btn small', onClick: () => {
+        if (!confirm('清掉本机缓存后需要重新从仓库拉取数据（不会影响仓库里的内容），确定？')) return;
+        clearCache();
+        toast('缓存已清，正在重新拉取');
+        ctx.refresh();
+      } }, '清缓存并刷新'),
       h('button', { class: 'btn small danger', onClick: () => {
         if (!confirm('退出后会清掉本机保存的 PAT 和缓存的数据，确定？')) return;
         clearCache();
@@ -112,6 +125,76 @@ export function renderSettings(ctx) {
   return wrap;
 }
 
+/**
+ * 连接自检：只读检查仓库 / config / summary / Actions / 分支，不写任何数据。
+ * 失败项直接复用 api.js 里已经写好的解决建议。
+ * @param {any} ctx
+ */
+function selfCheckCard(ctx) {
+  const box = h('div');
+  const button = h('button', { class: 'btn block', onClick: async () => {
+    const api = ctx.api;
+    if (!api) {
+      box.append(banner('还没有连接仓库，先在登录页填 PAT。', 'warn'));
+      return;
+    }
+    button.disabled = true;
+    clear(box);
+    box.append(h('div', { class: 'hint' }, '检查中…'));
+
+    /** @type {{ok: boolean, label: string, text: string}[]} */
+    const rows = [];
+    try {
+      const meta = await api.repoMeta();
+      rows.push({
+        ok: meta.private === true,
+        label: '仓库元信息',
+        text: meta.private
+          ? `${meta.fullName} · 私有 · 默认分支 ${meta.defaultBranch}`
+          : '这是公开仓库：健康数据不能放这里，请先改成 Private',
+      });
+    } catch (error) {
+      rows.push({ ok: false, label: '仓库元信息', text: error?.message ?? String(error) });
+    }
+    try {
+      await api.json('config.json', { fresh: true });
+      rows.push({ ok: true, label: 'config.json', text: '可读取' });
+    } catch (error) {
+      rows.push({ ok: false, label: 'config.json', text: error?.message ?? String(error) });
+    }
+    try {
+      const summary = await api.jsonOptional('data/summary.json', { fresh: true });
+      rows.push({ ok: true, label: 'data/summary.json', text: summary ? '可读取' : '不存在（可选文件）' });
+    } catch (error) {
+      rows.push({ ok: false, label: 'data/summary.json', text: error?.message ?? String(error) });
+    }
+    try {
+      const count = await api.countWorkflows();
+      rows.push({ ok: true, label: 'Actions 读取权限', text: `工作流 ${count} 个` });
+    } catch (error) {
+      rows.push({ ok: false, label: 'Actions 读取权限', text: error?.message ?? String(error) });
+    }
+    rows.push({ ok: true, label: '当前分支', text: ctx.state.auth?.branch || '未识别' });
+
+    clear(box);
+    const failed = rows.filter((row) => !row.ok).length;
+    box.append(banner(
+      failed ? `自检完成：${failed} 项需要处理，按提示修好后再点一次。` : '自检通过：读链路和 Actions 权限都正常。',
+      failed ? 'warn' : 'info',
+    ));
+    for (const row of rows) box.append(statusRow(row.label, row.text, row.ok ? 'lime' : 'red'));
+    button.disabled = false;
+  } }, '开始自检');
+
+  return h('section', { class: 'card' },
+    h('div', { class: 'card-title' }, '连接自检'),
+    h('div', { class: 'hint', style: 'margin-bottom:10px' },
+      '依次检查仓库、config、summary、Actions 权限和当前分支；只读，不会写入任何数据。'),
+    button,
+    box,
+  );
+}
+
 /** 数据状态：离线、缺失文件、缓存损坏、Hevy 同步。 */
 function dataStatusCard(ctx) {
   const d = ctx.data ?? {};
@@ -141,7 +224,11 @@ function dataStatusCard(ctx) {
   }
   card.append(h('div', { class: 'field-row', style: 'margin-top:10px' },
     h('button', { class: 'btn small', onClick: () => ctx.navigate('/record/import') }, '去导入页'),
-    h('button', { class: 'btn small ghost', onClick: () => { clearCache(); ctx.refresh(); } }, '清缓存并刷新'),
+    h('button', { class: 'btn small ghost', onClick: () => {
+      if (!confirm('清掉本机缓存后需要重新从仓库拉取数据（不会影响仓库里的内容），确定？')) return;
+      clearCache();
+      ctx.refresh();
+    } }, '清缓存并刷新'),
   ));
   return card;
 }

@@ -28,6 +28,7 @@ const SHELL = [
   './js/illustrations.js',
   './js/library_state.js',
   './js/rep.js',
+  './js/status.js',
   './js/validate.js',
   './js/cache_policy.js',
   './pages/today.js',

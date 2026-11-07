@@ -4,7 +4,10 @@ import { ApiError, GitHubApi, PublicRepoError, clearCache, pickBranch, resolveBr
 import { loadAll, todayISO, fmtDate } from './js/data.js';
 import { h, clear, icon, toast, banner } from './js/ui.js';
 import { DEMO_DATA } from './js/demo.js';
-import { hasPending, hevyRecoveryTasks, resumeUnfinished, unsentCount } from './js/queue.js';
+import { noticeFromError, offlineText } from './js/status.js';
+import {
+  hasPending, hevyRecoveryTasks, pendingSummary, resumeUnfinished, unsentCount, unsentTasks,
+} from './js/queue.js';
 import { renderToday } from './pages/today.js';
 import { renderWeek } from './pages/week.js';
 import { renderReviewList, renderReviewDetail } from './pages/review.js';
@@ -31,6 +34,8 @@ const state = {
   /** @type {string[]} */
   route: [],
   refreshing: false,
+  /** @type {{kind: 'offline'|'rate-limit', text: string}|null} 常驻状态：离线 / 限流 */
+  notice: null,
 };
 
 const NAV = [
@@ -124,9 +129,14 @@ async function connect(opts = {}) {
       state.auth = { ...auth, branch: picked.branch };
       state.api = picked.api;
       state.data = await loadAll(state.api, { fresh: Boolean(opts.fresh) });
+      // 成功加载后：只有确实回落缓存才保留离线提示，联网恢复即自动消失
+      state.notice = state.data.offline
+        ? { kind: 'offline', text: offlineText(state.data.offlineAt) }
+        : null;
     }
   } catch (error) {
     state.error = /** @type {Error} */ (error);
+    state.notice = noticeFromError(state.error);
   } finally {
     state.loading = false;
     render();
@@ -141,7 +151,12 @@ async function refresh() {
   await connect({ fresh: true });
   state.refreshing = false;
   render();
-  if (!state.error) toast('已刷新');
+  if (state.error) {
+    // 刷新失败必须给反馈，否则用户会以为按钮没反应
+    toast(errorText(state.error));
+    return;
+  }
+  toast(state.notice?.kind === 'offline' ? '已刷新，但部分数据仍来自缓存' : '已刷新');
 }
 
 // ---------------- 渲染 ----------------
@@ -168,37 +183,52 @@ function render() {
   } else if (state.error && !state.data) {
     content.append(renderError(state.error));
   } else {
+    // 离线 / 限流是持续状态，不是一次性 toast：成功刷新后自动消失
+    if (state.notice) {
+      content.append(h('div', { class: 'card' },
+        banner(state.notice.text, 'warn'),
+        h('button', { class: 'btn small', onClick: () => refresh() }, '重试'),
+        h('div', { class: 'hint', style: 'margin-top:8px' },
+          state.notice.kind === 'offline'
+            ? '离线期间不会丢数据；提交会被保留，联网后继续检查。'
+            : '限流只影响读取，不会重复写入；恢复后点「重试」即可。'),
+      ));
+    }
     const unsent = unsentCount();
+    const tasks = unsentTasks();
+    const summary = pendingSummary(tasks);
     const hevyPending = hevyRecoveryTasks();
     if (unsent > 0 || hevyPending.length > 0) {
+      const receiptOnly = unsent - tasks.length;
       content.append(h('div', { class: 'card' },
         banner(`有 ${unsent} 条提交还没确认结果（刷新、断网或超时都不会丢）。`, 'warn'),
+        ...summary.items.slice(0, 4).map((item) => h('div', { class: 'hint', style: 'margin-top:0' },
+          `${item.label} · ${item.statusLabel}${item.createdAt ? ` · ${relTime(item.createdAt)}` : ''}`)),
+        receiptOnly > 0
+          ? h('div', { class: 'hint', style: 'margin-top:0' },
+            `另有 ${receiptOnly} 条是关页面时留下的提交凭证，只能确认结果、不能重发。`)
+          : null,
         hevyPending.length
           ? h('div', { class: 'hint' },
-            `${hevyPending.length} 条 Hevy 导入已经上传过 CSV，不用重新选文件。`)
+            `${hevyPending.length} 条 Hevy 导入已经上传过 CSV，点「继续检查」即可，不用重新选文件。`)
           : null,
-        h('button', { class: 'btn small', onClick: async () => {
+        h('button', { class: 'btn small', style: 'margin-top:10px', onClick: async () => {
           if (!state.api) return;
           const results = await resumeUnfinished(state.api, { onStatus: (s) => toast(s) });
-          const unresolved = results.filter(
-            (item) => item.error || !['success', 'failure', 'cancelled'].includes(item.result?.state),
-          );
+          const stateOf = (item) => item.result?.state;
+          const success = results.filter((item) => stateOf(item) === 'success').length;
+          const failed = results.filter((item) => stateOf(item) === 'failure').length;
+          const open = results.filter(
+            (item) => item.error || !['success', 'failure', 'cancelled'].includes(stateOf(item)),
+          ).length;
           const needsFile = results.filter((item) => item.result?.needsFile).length;
           toast(needsFile
             ? `已检查；${needsFile} 条需要重新选择 CSV 文件`
-            : unresolved.length
-              ? `已检查，${unresolved.length} 条还没结束，稍后再试`
-              : '已确认完成');
+            : `已确认：成功 ${success} 条，失败 ${failed} 条，未结束 ${open} 条`);
           refresh();
-        } }, '继续检查'),
+        } }, summary.needsCheck ? '继续检查' : '确认结果'),
         h('div', { class: 'hint', style: 'margin-top:8px' },
           '恢复时沿用原 request_id，不会重复写入；超时/未知的任务不会自动丢弃。'),
-      ));
-    }
-    if (state.data?.offline) {
-      content.append(h('div', { class: 'card' },
-        banner(`离线：显示的是 ${cacheTime(state.data.offlineAt)} 的缓存数据，联网后点重试。`, 'warn'),
-        h('button', { class: 'btn small', onClick: () => refresh() }, '重试'),
       ));
     }
     if (state.data?.corrupt?.length) {
@@ -245,10 +275,11 @@ function sidebar() {
         h('div', { class: 'sub' }, '数据在自己的仓库里'),
       ),
     ),
-    h('nav', { class: 'nav' },
+    h('nav', { class: 'nav', 'aria-label': '主导航' },
       NAV.map((item) => h('a', {
         class: section === item.key ? 'on' : '',
         href: `#/${item.key}`,
+        'aria-current': section === item.key ? 'page' : null,
         onClick: (event) => { event.preventDefault(); navigate(`/${item.key}`); },
       }, icon(item.icon), h('span', {}, item.label))),
     ),
@@ -312,28 +343,39 @@ function bottomNav() {
     { key: 'week', label: '本周', icon: 'week' },
     { key: 'review', label: '复盘', icon: 'review' },
   ];
-  const nav = h('nav', { class: 'bottom-nav' },
+  const nav = h('nav', { class: 'bottom-nav', 'aria-label': '底部导航' },
     items.map((item) => h('a', {
       class: section === item.key ? 'on' : '',
       href: `#/${item.key}`,
+      'aria-current': section === item.key ? 'page' : null,
       onClick: (event) => { event.preventDefault(); moreOpen = false; navigate(`/${item.key}`); },
     }, icon(item.icon), h('span', {}, item.label))),
     h('button', {
       class: moreOpen ? 'on' : '',
+      'aria-label': '更多导航',
+      'aria-expanded': moreOpen ? 'true' : 'false',
+      'aria-haspopup': 'menu',
       onClick: (event) => { event.stopPropagation(); moreOpen = !moreOpen; render(); },
     }, icon('settings'), h('span', {}, '更多')),
   );
 
   if (moreOpen) {
-    nav.append(h('div', { class: 'more-sheet', onClick: (event) => event.stopPropagation() },
-      h('a', {
-        href: '#/library',
-        onClick: (event) => { event.preventDefault(); moreOpen = false; navigate('/library'); },
-      }, icon('library'), h('span', {}, '动作库')),
-      h('a', {
-        href: '#/settings',
-        onClick: (event) => { event.preventDefault(); moreOpen = false; navigate('/settings'); },
-      }, icon('settings'), h('span', {}, '设置')),
+    nav.append(h('div', {
+      class: 'more-sheet',
+      role: 'menu',
+      'aria-label': '更多',
+      onClick: (event) => event.stopPropagation(),
+    },
+    h('a', {
+      href: '#/library',
+      role: 'menuitem',
+      onClick: (event) => { event.preventDefault(); moreOpen = false; navigate('/library'); },
+    }, icon('library'), h('span', {}, '动作库')),
+    h('a', {
+      href: '#/settings',
+      role: 'menuitem',
+      onClick: (event) => { event.preventDefault(); moreOpen = false; navigate('/settings'); },
+    }, icon('settings'), h('span', {}, '设置')),
     ));
   }
   return nav;
@@ -434,6 +476,7 @@ function loginView() {
         state.data = DEMO_DATA;
         state.loading = false;
         state.error = null;
+        state.notice = null;
         navigate('/today');
         render();
       } }, '先看看演示（不连接）'),
@@ -467,12 +510,6 @@ function relTime(iso) {
   if (diff < 3_600_000) return `${Math.round(diff / 60_000)} 分钟前`;
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)} 小时前`;
   return `${Math.round(diff / 86_400_000)} 天前`;
-}
-
-/** @param {string|null} iso */
-function cacheTime(iso) {
-  if (!iso) return '上次';
-  return new Date(iso).toLocaleString('zh-CN', { hour12: false });
 }
 
 // 有提交还没完成就关页面，提醒一下

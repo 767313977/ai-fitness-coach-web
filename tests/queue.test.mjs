@@ -4,8 +4,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  discardTask, enqueue, enqueueHevyImport, hevyRecoveryTasks, receiptOnlyCount,
-  resumeTaskById, resumeUnfinished, unsentCount, unsentTasks, withWriteLock,
+  discardTask, enqueue, enqueueHevyImport, hevyRecoveryTasks, pendingSummary, receiptOnlyCount,
+  resumeTaskById, resumeUnfinished, taskKindLabel, taskStatusLabel, unsentCount, unsentTasks,
+  withWriteLock,
 } from '../js/queue.js';
 
 class MemoryStorage {
@@ -299,4 +300,26 @@ test('discardTask：人工放弃后不再出现在未完成列表', async () => 
 test('resumeTaskById：未知 id 给出明确错误', async () => {
   freshEnv();
   await assert.rejects(resumeTaskById(makeApi(), 'not-exist'), /已经结束或不存在/);
+});
+
+test('pendingSummary：展示任务类型、状态和提交时间', () => {
+  const summary = pendingSummary([
+    { id: 'a', kind: 'hevy-import', status: 'uploaded', createdAt: '2026-11-07T10:00:00Z' },
+    { id: 'b', kind: 'checkin', status: 'running', createdAt: '2026-11-07T10:01:00Z' },
+  ]);
+  assert.equal(summary.items[0].label, 'Hevy 导入');
+  assert.equal(summary.items[0].statusLabel, '已上传，待确认');
+  assert.equal(summary.items[1].label, '打卡');
+  assert.equal(summary.items[1].statusLabel, '提交中');
+  assert.equal(summary.items[0].createdAt, '2026-11-07T10:00:00Z');
+  assert.equal(summary.needsCheck, true);
+});
+
+test('pendingSummary：终态不需要继续检查，未知类型有兜底文案', () => {
+  const summary = pendingSummary([{ id: 'a', kind: 'diet', status: 'failure', createdAt: '' }]);
+  assert.equal(summary.needsCheck, false);
+  assert.equal(taskKindLabel('unknown-kind'), '提交');
+  assert.equal(taskKindLabel(undefined), '提交');
+  assert.equal(taskStatusLabel(undefined), '未知');
+  assert.equal(pendingSummary([]).needsCheck, false);
 });

@@ -116,6 +116,7 @@ test('403 二级限流：不误报成 PAT 权限不足', async () => {
     (error) => error instanceof ApiError
       && /二级限流/.test(error.message)
       && error.rateLimited === true
+      && error.rateLimitKind === 'secondary'
       && !/读取权限/.test(error.message),
   );
 });
@@ -130,7 +131,8 @@ test('403 主限流：剩余次数为 0 时提示限流', async () => {
     api.raw('config.json'),
     (error) => error instanceof ApiError
       && /每小时 5000 次/
-      && error.rateLimited === true,
+      && error.rateLimited === true
+      && error.rateLimitKind === 'primary',
   );
 });
 
@@ -182,7 +184,8 @@ test('429 也统一提示限流，而不是「GitHub 返回 429」', async () =>
     api.raw('config.json'),
     (error) => error instanceof ApiError
       && /限流/.test(error.message)
-      && error.rateLimited === true,
+      && error.rateLimited === true
+      && error.rateLimitKind === 'unknown',
   );
 });
 

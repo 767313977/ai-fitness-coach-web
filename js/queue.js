@@ -102,6 +102,58 @@ export function pendingCount() {
   return pending;
 }
 
+/** 任务类型 → 人话标签 */
+const KIND_LABEL = {
+  checkin: '打卡',
+  diet: '饮食',
+  cardio: '有氧',
+  body: '身体指标',
+  weekly: '周复盘',
+  proposal: 'AI 提案',
+  'hevy-import': 'Hevy 导入',
+  'hevy-sync': 'Hevy 同步',
+  workflow: '提交',
+};
+
+/** @param {string|undefined} kind */
+export function taskKindLabel(kind) {
+  return KIND_LABEL[kind] ?? '提交';
+}
+
+/** @param {string|undefined} status */
+export function taskStatusLabel(status) {
+  const labels = {
+    pending: '等待中',
+    running: '提交中',
+    timeout: '等待超时',
+    unknown: '结果未知',
+    uploaded: '已上传，待确认',
+    success: '已完成',
+    failure: '失败',
+    cancelled: '已取消',
+  };
+  return labels[status] ?? status ?? '未知';
+}
+
+/**
+ * 未完成任务摘要：让用户看清「什么任务、什么状态、什么时候提交的」。
+ * @param {any[]} tasks
+ * @returns {{items: {id: string, label: string, status: string, statusLabel: string, createdAt: string}[], needsCheck: boolean}}
+ */
+export function pendingSummary(tasks) {
+  const items = tasks.map((task) => ({
+    id: task.id,
+    label: taskKindLabel(task.kind),
+    status: task.status || 'unknown',
+    statusLabel: taskStatusLabel(task.status),
+    createdAt: task.createdAt || '',
+  }));
+  const needsCheck = items.some((item) => (
+    ['pending', 'running', 'timeout', 'unknown', 'uploaded'].includes(item.status)
+  ));
+  return { items, needsCheck };
+}
+
 export function hasPending() {
   return pending > 0;
 }

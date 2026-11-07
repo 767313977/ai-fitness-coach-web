@@ -114,3 +114,28 @@ test('API 模式下 sync_state.json 缺失要提示', async () => {
   const data = await loadAll(fakeApi({ mode: 'api' }));
   assert.equal(data.missing.includes('data/sync_state.json'), true);
 });
+
+test('loadAll：频繁变化的文件用短 TTL，刷新时 fresh 透传', async () => {
+  /** @type {{path: string, fresh?: boolean, maxAgeMs?: number}[]} */
+  const seen = [];
+  const api = {
+    lastOffline: null,
+    async raw(path, opts = {}) {
+      seen.push({ path, fresh: opts.fresh, maxAgeMs: opts.maxAgeMs });
+      if (path === 'config.json') return '{}';
+      return '';
+    },
+  };
+
+  await loadAll(api);
+  const byPath = new Map(seen.map((item) => [item.path, item]));
+  assert.equal(byPath.get('data/summary.json')?.maxAgeMs, 30_000);
+  assert.equal(byPath.get('data/sync_state.json')?.maxAgeMs, 30_000);
+  assert.equal(byPath.get('config.json')?.maxAgeMs, 60_000);
+  assert.equal(byPath.get('data/summary.json')?.fresh, undefined);
+
+  seen.length = 0;
+  await loadAll(api, { fresh: true });
+  assert.equal(seen.find((item) => item.path === 'data/summary.json')?.fresh, true);
+  assert.equal(seen.find((item) => item.path === 'config.json')?.fresh, true);
+});

@@ -207,9 +207,12 @@ export function escapeHtml(text) {
  * @param {{date: string, value: number}[]} entries
  * @param {{weeks?: number}} [opts]
  */
-export function heatmap(entries, opts = {}) {
+export function heatmap(entries = [], opts = {}) {
   const weeks = opts.weeks ?? 26;
   const map = new Map(entries.map((e) => [e.date, e.value]));
+  if (!entries.some((e) => Number(e.value) > 0)) {
+    return emptyChart(`最近 ${weeks} 周还没有记录`);
+  }
   const today = new Date();
   const dow = (today.getDay() + 6) % 7; // 周一 = 0
   const end = new Date(today);
@@ -246,7 +249,8 @@ export function heatmap(entries, opts = {}) {
  */
 export function lineChart(points, opts = {}) {
   const data = points.filter((p) => p.value !== null && Number.isFinite(p.value));
-  if (data.length < 2) return emptyChart('数据还不够画线');
+  if (!data.length) return emptyChart('还没有数据');
+  if (data.length < 2) return emptyChart('只有 1 个数据点，至少 2 个才能画线');
   const W = 320; const H = opts.height ?? 130;
   const padL = 42; const padR = 30; const padT = 14; const padB = 22;
   const values = data.map((p) => Number(p.value));

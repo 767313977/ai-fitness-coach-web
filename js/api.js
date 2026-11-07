@@ -16,13 +16,15 @@ export class ApiError extends Error {
   /**
    * @param {string} message
    * @param {number} status
-   * @param {{rateLimited?: boolean}} [extra]
+   * @param {{rateLimited?: boolean, rateLimitKind?: 'primary'|'secondary'|'unknown'}} [extra]
    */
   constructor(message, status, extra = {}) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.rateLimited = Boolean(extra.rateLimited);
+    /** 限流级别：一级（配额用尽）/ 二级（短时间请求过多）/ 未知（429 未说明） */
+    this.rateLimitKind = extra.rateLimitKind ?? null;
   }
 }
 
@@ -57,14 +59,23 @@ async function forbiddenError(response, permissionMessage) {
   let body = '';
   try { body = (await response.text()).toLowerCase(); } catch { /* 读不到 body 就按权限处理 */ }
   if (body.includes('secondary rate limit') || body.includes('abuse detection')) {
-    return new ApiError('GitHub 触发了二级限流，请等 1–2 分钟再试', response.status, { rateLimited: true });
+    return new ApiError('GitHub 触发了二级限流，请等 1–2 分钟再试', response.status, {
+      rateLimited: true,
+      rateLimitKind: 'secondary',
+    });
   }
   if (body.includes('rate limit exceeded') || response.headers.get('X-RateLimit-Remaining') === '0') {
-    return new ApiError('GitHub API 限流了（每小时 5000 次），过一会儿再试', response.status, { rateLimited: true });
+    return new ApiError('GitHub API 限流了（每小时 5000 次），过一会儿再试', response.status, {
+      rateLimited: true,
+      rateLimitKind: 'primary',
+    });
   }
   // 429 本身就是限流，只是没说明是哪一级
   if (response.status === 429) {
-    return new ApiError('GitHub API 限流了，过一会儿再试', 429, { rateLimited: true });
+    return new ApiError('GitHub API 限流了，过一会儿再试', 429, {
+      rateLimited: true,
+      rateLimitKind: 'unknown',
+    });
   }
   return new ApiError(permissionMessage, response.status);
 }
