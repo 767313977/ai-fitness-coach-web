@@ -4,6 +4,10 @@ name: Test & Deploy Pages
 on:
   push:
     branches: [main]
+    # 文档变化不需要重新测试 + 发布
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
   workflow_dispatch:
 
 permissions:
