@@ -93,6 +93,17 @@ export function zhSteps(item) {
   return Array.isArray(item?.steps) ? item.steps : [];
 }
 
+/**
+ * 按语言取分步说明：'zh'（默认，上游中文译文）或 'en'（英文原文）。
+ * @param {any} item
+ * @param {'zh'|'en'} lang
+ * @returns {string[]}
+ */
+export function stepsFor(item, lang) {
+  if (lang === 'en') return Array.isArray(item?.steps_en) ? item.steps_en : [];
+  return zhSteps(item);
+}
+
 /** @param {any} item */
 export function zhText(item) {
   return zhSteps(item).join('');

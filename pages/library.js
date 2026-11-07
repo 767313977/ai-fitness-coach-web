@@ -5,9 +5,15 @@ import { fmtNum, fmtDate, num } from '../js/data.js';
 import { personalRecords } from '../js/analytics.js';
 import { loadIllustrationIndex, findIllustration } from '../js/illustrations.js';
 import {
-  loadExercises, matchPlan, searchExercises, zhSteps,
+  loadExercises, matchPlan, searchExercises, stepsFor,
   loadIndex, loadBodyPart, bodyPartSlug, searchFull,
 } from '../js/dataset.js';
+
+const STEP_LANG_KEY = 'afc.steps.lang';
+/** 分步说明语言：zh（默认）/ en，记住上次选择 */
+let stepLang = (() => {
+  try { return localStorage.getItem(STEP_LANG_KEY) === 'en' ? 'en' : 'zh'; } catch { return 'zh'; }
+})();
 
 let query = '';
 /** @type {any} */
@@ -216,7 +222,34 @@ export function renderLibrary(ctx) {
       return;
     }
 
-    const steps = Array.isArray(item.steps) ? item.steps : zhSteps(item);
+    const stepsBox = h('div');
+    const drawSteps = (lang) => {
+      clear(stepsBox);
+      const list = stepsFor(item, lang);
+      if (!list.length) {
+        stepsBox.append(h('p', { class: 'hint', style: 'margin-top:10px' },
+          lang === 'en' ? 'No English steps for this exercise.' : '这个动作还没有中文说明。'));
+        return;
+      }
+      stepsBox.append(h('ol', { class: 'steps' }, list.map((step) => h('li', {}, step))));
+    };
+
+    const hasEn = Array.isArray(item.steps_en) && item.steps_en.length > 0;
+    const langRow = hasEn ? h('div', { class: 'chip-row', style: 'margin:4px 0 10px' },
+      ...[['zh', '中文'], ['en', 'English']].map(([key, label]) => h('button', {
+        class: `chip ${stepLang === key ? 'lime' : ''}`,
+        onClick: () => {
+          stepLang = key;
+          try { localStorage.setItem(STEP_LANG_KEY, key); } catch { /* 隐私模式忽略 */ }
+          drawSteps(stepLang);
+          langRow.querySelectorAll('button').forEach((btn, index) => {
+            btn.className = `chip ${(index === 0 ? 'zh' : 'en') === stepLang ? 'lime' : ''}`.trim();
+          });
+        },
+      }, label)),
+    ) : null;
+    drawSteps(stepLang);
+
     right.append(h('section', { class: 'card' },
       h('div', { class: 'card-title' }, ex ? '本计划动作' : '动作库'),
       h('h2', { style: 'font-size:20px;margin-bottom:2px' }, ex?.name ?? item.zh ?? item.name),
@@ -234,11 +267,10 @@ export function renderLibrary(ctx) {
           ex.rpe_cap != null ? ` · RPE ≤ ${ex.rpe_cap}` : '',
           ex.cue ? ` · 要点：${ex.cue}` : ''),
       ) : null,
-      steps.length
-        ? h('ol', { class: 'steps' }, steps.map((s) => h('li', {}, s)))
-        : h('p', { class: 'hint', style: 'margin-top:12px' }, '这个动作还没有中文说明。'),
+      langRow,
+      stepsBox,
       h('p', { class: 'hint', style: 'margin-top:14px' },
-        '说明文字来自 hasaneyldrm/exercises-dataset（MIT）；不含 Gym visual 的图片/GIF。'),
+        '说明文字来自 hasaneyldrm/exercises-dataset（MIT），含英文原文与中文译文；不含 Gym visual 的图片/GIF。'),
     ));
 
     if (ex) {
